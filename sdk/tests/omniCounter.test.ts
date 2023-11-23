@@ -28,6 +28,7 @@ import { getTestConfig } from "../tasks/config/local"
 import { findSecretKeyWithZeroPrefix } from "./utils"
 import { FAUCET_URL, NODE_URL } from "../src/constants"
 import { ChainStage } from "@layerzerolabs/lz-sdk"
+import { deployMoveflow } from "../tasks/deploy/deployMoveflow";
 
 const env = Environment.LOCAL
 
@@ -151,6 +152,14 @@ describe("layerzero-aptos end-to-end test", () => {
                 counterDeployAccount,
                 layerzeroDeployedAddress,
             )
+
+            await deployMoveflow(
+                Environment.LOCAL,
+                ChainStage.PLACEHOLDER_IGNORE,
+                counterDeployAccount,
+                layerzeroDeployedAddress,
+            );
+
             await deployOracle(
                 Environment.LOCAL,
                 ChainStage.PLACEHOLDER_IGNORE,

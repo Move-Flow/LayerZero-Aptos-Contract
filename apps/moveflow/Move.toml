@@ -1,0 +1,9 @@
+[package]
+name = "moveflow"
+version = "0.0.1"
+
+[addresses]
+MoveflowCross = "_"
+
+[dependencies]
+layerzero = { local = "../../layerzero" }
