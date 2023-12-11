@@ -99,6 +99,7 @@ module MoveflowCross::stream {
         remark: String,
         sender: address,
         recipient: vector<u8>,
+        coin_type: String,
         escrow_address: address,
         interval: u64,
         rate_per_interval: u64,
@@ -148,8 +149,8 @@ module MoveflowCross::stream {
         coin_type: String,
     }
 
-    struct Capabilities has key {
-        cap: UaCapability<u8>,  // Todo: if to use u8
+    struct Capabilities<phantom UA> has key {
+        cap: UaCapability<UA>,  // Todo: if to use u8
     }
 
     /// set fee_recipient and admin
@@ -182,6 +183,24 @@ module MoveflowCross::stream {
         );
 
         let cap = endpoint::register_ua<u8>(owner);
+        lzapp::init(owner, cap);
+        remote::init(owner);
+
+        move_to(owner, Capabilities { cap });
+    }
+
+    /// Before sending messages on LayerZero you need to register your UA(user application).
+    /// The UA type is an identifier of your application. You can use any type as UA, e.g. 0x1::MyApp::MyApp as a UA.
+    public entry fun register_ua<UA>(
+        owner: &signer,
+    ) {
+        let owner_addr = signer::address_of(owner);
+        assert!(
+            @MoveflowCross == owner_addr,
+            error::permission_denied(STREAM_PERMISSION_DENIED),
+        );
+
+        let cap = endpoint::register_ua<UA>(owner);
         lzapp::init(owner, cap);
         remote::init(owner);
 
@@ -340,6 +359,7 @@ module MoveflowCross::stream {
             remark,
             sender: sender_address,
             recipient,
+            coin_type,
             escrow_address,
             interval,
             rate_per_interval,
@@ -500,14 +520,16 @@ module MoveflowCross::stream {
         );
     }
 
-    public entry fun lz_receive<CoinType>(chain_id: u64, src_address: vector<u8>, payload: vector<u8>) acquires GlobalConfig, Escrow /*Capabilities*/ {
-        withdraw_cross_chain_res<CoinType>(chain_id, src_address, payload);
-    }
-
     // Todo: how to use lz_receive_types
     public fun lz_receive_types(_src_chain_id: u64, _src_address: vector<u8>, _payload: vector<u8>) : vector<type_info::TypeInfo> {
         vector::empty<type_info::TypeInfo>()
     }
+
+    public entry fun lz_receive<CoinType>(chain_id: u64, src_address: vector<u8>, payload: vector<u8>) acquires GlobalConfig, Escrow /*Capabilities*/ {
+        withdraw_cross_chain_res<CoinType>(chain_id, src_address, payload);
+    }
+
+
     public entry fun withdraw_cross_chain_res<CoinType>(
         chain_id: u64, src_address: vector<u8>, payload: vector<u8>
     ) acquires GlobalConfig, Escrow {
@@ -611,7 +633,7 @@ module MoveflowCross::stream {
         );
     }
 
-    public entry fun withdraw_cross_chain_req(
+    public entry fun withdraw_cross_chain_req<UA> (
         account: &signer,
         chain_id: u64,
         fee: u64,
@@ -622,7 +644,7 @@ module MoveflowCross::stream {
         let fee_in_coin = coin::withdraw<AptosCoin>(account, fee);
         let signer_addr = signer::address_of(account);
 
-        let cap = borrow_global<Capabilities>(signer_addr);
+        let cap = borrow_global<Capabilities<UA>>(signer_addr);
         let dst_address = remote::get(@MoveflowCross, chain_id);
         let payload_bytes = vector::empty();
         serde::serialize_u64(&mut payload_bytes, stream_id);
