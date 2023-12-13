@@ -10,14 +10,17 @@ export class Counter {
     private sdk: SDK
     private lzApp: LzApp
     private readonly uaType: string
+    private readonly uaMfType: string
 
     constructor(sdk: SDK, counter: aptos.MaybeHexString, lzApp?: aptos.MaybeHexString) {
         this.sdk = sdk
         this.address = counter
         this.lzApp = new LzApp(sdk, lzApp || sdk.accounts.layerzero!, counter)
         this.uaType = `${this.address}::counter::CounterUA`
+        this.uaMfType = `${this.address}::counter::counter`
     }
 
+/*
     async initialize(signer: aptos.AptosAccount): Promise<aptos.Types.Transaction> {
         const transaction: aptos.Types.EntryFunctionPayload = {
             function: `${this.address}::counter::init`,
@@ -27,6 +30,18 @@ export class Counter {
 
         return this.sdk.sendAndConfirmTransaction(signer, transaction)
     }
+*/
+
+    async initialize(signer: aptos.AptosAccount, fee_recipient: aptos.MaybeHexString, admin: aptos.MaybeHexString): Promise<aptos.Types.Transaction> {
+        const transaction: aptos.Types.EntryFunctionPayload = {
+            function: `${this.address}::counter::initialize`,
+            type_arguments: [],
+            arguments: [fee_recipient, admin],
+        }
+
+        return this.sdk.sendAndConfirmTransaction(signer, transaction)
+    }
+
 
     async getRemote(remoteChainId: aptos.BCS.Uint16): Promise<aptos.BCS.Bytes> {
         return this.lzApp.getRemote(remoteChainId)

@@ -127,3 +127,5 @@ reference-working
 **/deployments/localhost*
 **/deployments/*-fork/
 transactions.csv
+/sdk/testkey
+/apps/counter/counter.move.bak

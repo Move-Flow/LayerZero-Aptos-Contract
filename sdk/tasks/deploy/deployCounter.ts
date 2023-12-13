@@ -31,20 +31,26 @@ export async function deployCounter(
 
     // compile and deploy bridge
     const packagePath = path.join(__dirname, "../../../apps/counter")
-    await compilePackage(packagePath, packagePath, {
-        layerzero: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        layerzero_common: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        msglib_auth: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        zro: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        msglib_v1_1: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        msglib_v2: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        executor_auth: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        executor_v2: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
-        counter: counterAddress,
-    })
+    try {
+        const compilePackageCounterRe = await compilePackage(packagePath, packagePath, {
+            layerzero: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            layerzero_common: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            msglib_auth: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            zro: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            msglib_v1_1: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            msglib_v2: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            executor_auth: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            executor_v2: layerzeroAddress ?? sdk.accounts.layerzero.toString(),
+            counter: counterAddress,
+            MoveflowCross: counterAddress,
+        })
+        console.log("compilePackageCounterRe", compilePackageCounterRe);
+    } catch (e) {
+        console.log("compilePackageCounterRe", e);
+    }
 
     const { metadata, modules } = getMetadataAndModules(packagePath, COUNTER_MODULES)
-    await sdk.deploy(account, metadata, modules)
+    const deployCounterRe = await sdk.deploy(account, metadata, modules)
 
-    console.log("Deployed Counter!!")
+    console.log("Deployed Counter!!", deployCounterRe)
 }

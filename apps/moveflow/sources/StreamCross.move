@@ -149,8 +149,10 @@ module MoveflowCross::stream {
         coin_type: String,
     }
 
+    struct StreamUA {}
+
     struct Capabilities<phantom UA> has key {
-        cap: UaCapability<UA>,  // Todo: if to use u8
+        cap: UaCapability<UA>,
     }
 
     /// set fee_recipient and admin
@@ -182,7 +184,7 @@ module MoveflowCross::stream {
             }
         );
 
-        let cap = endpoint::register_ua<u8>(owner);
+        let cap = endpoint::register_ua<StreamUA>(owner);
         lzapp::init(owner, cap);
         remote::init(owner);
 

@@ -20,7 +20,7 @@ export class Moveflow {
 
     async initialize(signer: aptos.AptosAccount, fee_recipient: aptos.MaybeHexString, admin: aptos.MaybeHexString): Promise<aptos.Types.Transaction> {
         const transaction: aptos.Types.EntryFunctionPayload = {
-            function: `${this.address}::stream::init`,
+            function: `${this.address}::stream::initialize`,
             type_arguments: [],
             arguments: [fee_recipient, admin],
         }

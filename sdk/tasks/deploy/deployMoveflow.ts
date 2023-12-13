@@ -44,7 +44,7 @@ export async function deployMoveflow(
     })
 
     const { metadata, modules } = getMetadataAndModules(packagePath, MOVEFLOW_MODULES)
-    await sdk.deploy(account, metadata, modules)
+    const deployRe = await sdk.deploy(account, metadata, modules);
 
-    console.log("Deployed Moveflow!!")
+    console.log("Deployed Moveflow!!", deployRe)
 }

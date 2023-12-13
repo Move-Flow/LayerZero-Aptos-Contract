@@ -1,0 +1,194 @@
+import * as aptos from "aptos"
+import * as layerzero from "../src"
+import { encodePacket, fullAddress, getBalance, hashPacket, rebuildPacketFromEvent } from "../src/utils"
+import { Environment, Packet } from "../src/types"
+import { Counter } from "../src/modules/apps/counter"
+import { Oracle } from "../src/modules/apps/oracle"
+import {
+    deployCommon,
+    deployCounter,
+    deployExecutorV2,
+    deployLayerzero,
+    deployMsglibV1_1,
+    deployMsglibV2,
+    deployOracle,
+    deployZro,
+} from "../tasks/deploy"
+import {
+    configureExecutor,
+    configureExecutorWithRemote,
+    configureLayerzeroWithRemote,
+    configureOracle,
+    configureOracleWithRemote,
+    configureRelayer,
+    configureRelayerWithRemote,
+    Transaction,
+} from "../tasks/wireAll"
+import { getTestConfig } from "../tasks/config/local"
+import { findSecretKeyWithZeroPrefix } from "./utils"
+import { FAUCET_URL, NODE_URL } from "../src/constants"
+import { ChainStage } from "@layerzerolabs/lz-sdk"
+import { deployMoveflow } from "../tasks/deploy/deployMoveflow";
+import {Moveflow} from "../src/modules/apps/moveflow";
+import {AptosAccount, AptosClient} from "aptos";
+import fs from "fs";
+
+const env = Environment.LOCAL
+console.log("moveflow deploy");
+/*
+Aptos (Testnet)
+chainId: 10108
+endpoint: 0x1759cc0d3161f1eb79f65847d4feb9d1f74fb79014698a23b16b28b9cd4c37e3
+*/
+
+describe("Moveflow layerzero-aptos end-to-end test",  () => {
+    beforeAll(async () => {
+        const client = new AptosClient(NODE_URL[env]);
+
+        const pkStr = fs.readFileSync("./testkey").toString()
+            .replace("0x", "")
+            .replace("0X", "")
+            .trim();
+        const pkHex = Uint8Array.from(Buffer.from(pkStr, 'hex'));
+        const mfAccount = new AptosAccount(pkHex);
+        let lzAptosEndpointAddress = '0x09493fce6596e095605efe6b094c9b979180d373504f732eb7036484a8783543';
+
+        if (env === Environment.LOCAL) {
+            const faucet = new aptos.FaucetClient(NODE_URL[env], FAUCET_URL[env])
+            await faucet.fundAccount(mfAccount.address(), 1000000000)
+
+            const majorVersion = 1,
+                minorVersion = 0
+            // layerzero account
+            const layerzeroDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+            const layerzeroDeployedAddress = layerzeroDeployAccount.address().toString()
+
+            // oracle account
+            const validator1 = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+            const validator1Address = validator1.address().toString()
+            const validator2 = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+            const validator2Address = validator2.address().toString()
+            const oracleDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+            const oracleDeployedAddress = oracleDeployAccount.address().toString()
+            let oracleResourceAddress
+            // let oracleMultisigPubkey, oracleMultisigAddress
+
+            // relayer account
+            const relayerDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+            const relayerDeployedAddress = relayerDeployAccount.address().toString()
+
+            // executor account
+            const executorAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+            const executorAddress = executorAccount.address().toString()
+
+            const chainId = 20030
+
+            console.log(`layerzero deploy account: ${layerzeroDeployedAddress}`)
+            console.log(`oracle deploy account: ${oracleDeployedAddress}`)
+            // console.log(`oracle deploy account: ${oracleMultisigAddress}`)
+            console.log(`relayer deploy account: ${relayerDeployedAddress}`)
+            console.log(`counter deploy account: ${counterDeployedAddress}`)
+
+            // airdrop
+            await faucet.fundAccount(validator1Address, 100000000000)
+            await faucet.fundAccount(validator2Address, 100000000000)
+            await faucet.fundAccount(relayerDeployedAddress, 100000000000)
+            await faucet.fundAccount(executorAddress, 100000000000)
+
+            await deployZro(Environment.LOCAL, layerzeroDeployAccount)
+            await deployCommon(Environment.LOCAL, layerzeroDeployAccount)
+            await deployMsglibV1_1(Environment.LOCAL, layerzeroDeployAccount)
+            await deployMsglibV2(Environment.LOCAL, layerzeroDeployAccount)
+            await deployExecutorV2(Environment.LOCAL, layerzeroDeployAccount)
+            await deployLayerzero(Environment.LOCAL, chainId, layerzeroDeployAccount)
+            lzAptosEndpointAddress = layerzeroDeployedAddress;
+
+            await deployOracle(
+                Environment.LOCAL,
+                ChainStage.PLACEHOLDER_IGNORE,
+                oracleDeployAccount,
+                layerzeroDeployedAddress,
+            )
+            oracleResourceAddress = await oracleModule.getResourceAddress()
+
+        }
+
+        console.log(`layerzero endpoint account: ${lzAptosEndpointAddress}`);
+
+        console.log(`moveflow account: ${mfAccount.address()}`)
+        console.log(`=============== Retrieving balance of account: ${mfAccount.address()}`);
+        const resources = await client.getAccountResources(mfAccount.address());
+// console.log("resources", resources);
+        const accountResource = resources.find((r) => r.type === "0x1::coin::CoinStore<0x1::aptos_coin::AptosCoin>");
+        const balance = (accountResource?.data as { coin: { value: string } }).coin.value;
+        console.log(`=============== moveflow account apt balance: ${balance}`);
+
+        const stage = (() => {
+            if (env === Environment.LOCAL)
+                return ChainStage.TESTNET_SANDBOX;
+            else if (env === Environment.TESTNET)
+                return ChainStage.TESTNET;
+            else
+                return ChainStage.MAINNET;
+        })();
+
+/*
+        await deployMoveflow(
+            env,
+            stage,
+            mfAccount,
+            lzAptosEndpointAddress,
+        );
+
+        console.log("=============== Start init moveflow")
+        const sdk = new layerzero.SDK({
+            provider: new aptos.AptosClient(NODE_URL[env]),
+            stage,
+        })
+        const payload: aptos.Types.EntryFunctionPayload = {
+            function: `${mfAccount.address()}::streamTmp01::initialize`,
+            type_arguments: [],
+            arguments: [mfAccount.address(), mfAccount.address()],
+        };
+        const initRe = await sdk.sendAndConfirmTransaction(mfAccount, payload)
+*/
+/*
+        let txnRequest = await client.generateTransaction(mfAccount.address(), payload);
+        let signedTxn = await client.signTransaction(mfAccount, txnRequest);
+        let transactionRes = await client.submitTransaction(signedTxn);
+        await client.waitForTransaction(transactionRes.hash);
+        let initRe = await client.getTransactionByHash(transactionRes.hash);
+        console.log("=============== moveflow initiated!", initRe);
+*/
+        await deployCounter(
+            env,
+            stage,
+            mfAccount,
+            lzAptosEndpointAddress,
+        )
+
+
+
+    })
+
+    // counter account
+    const counterDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+    const counterDeployedAddress = counterDeployAccount.address().toString()
+
+    describe("feature tests", () => {
+        test("serialize", async () => {
+            // console.log(`deploy: ${JSON.stringify(layerzeroDeployAccount.toPrivateKeyObject())}`)
+            // expect(counterDeployedAddress.length).toBe(66)  // some address is starts with 0
+
+            const bytes1 = Uint8Array.from(Buffer.from(counterDeployedAddress))
+            expect(bytes1.length).toBe(counterDeployedAddress.length)
+
+            const serializer = new aptos.BCS.Serializer()
+            serializer.serializeFixedBytes(Buffer.from(counterDeployedAddress))
+            const bytes2 = serializer.getBytes()
+            // console.log(`bytes2: ${bytes2}`)
+            expect(bytes2.length).toBe(counterDeployedAddress.length)
+            expect(bytes2).toEqual(bytes1)
+        })
+    })
+})
