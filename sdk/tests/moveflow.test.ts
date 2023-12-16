@@ -37,11 +37,11 @@ const env = Environment.LOCAL
 
 // retrieve the address after self deployment in local env or aptos doc in testnet env
 const layerzeroDeployedAddress = "0x0514301ce5cfca15e2d9def8629602e78f62435f0e0bb126036ac66cd810c8b3";
-const oracleDeployedAddress = "0x00d03f4c1455d27aece738935c0f2ea87d109daffd4574ee578eb315d6f2a058";
+// const oracleDeployedAddress = "0x00d03f4c1455d27aece738935c0f2ea87d109daffd4574ee578eb315d6f2a058";
 describe("layerzero-aptos end-to-end test", () => {
+/*
     const majorVersion = 1,
         minorVersion = 0
-/*
     // layerzero account
     const layerzeroDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
     const layerzeroDeployedAddress = layerzeroDeployAccount.address().toString()
@@ -53,12 +53,10 @@ describe("layerzero-aptos end-to-end test", () => {
     const validator2Address = validator2.address().toString()
     const oracleDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
     const oracleDeployedAddress = oracleDeployAccount.address().toString()
-*/
     let oracleResourceAddress
     // let oracleMultisigPubkey, oracleMultisigAddress
 
     // relayer account
-/*
     const relayerDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
     const relayerDeployedAddress = relayerDeployAccount.address().toString()
 
@@ -68,7 +66,18 @@ describe("layerzero-aptos end-to-end test", () => {
 */
 
     // counter account
-    const counterDeployAccount = new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1))
+    const counterDeployAccount = (() => {
+        if(env === Environment.LOCAL)
+            return new aptos.AptosAccount(findSecretKeyWithZeroPrefix(1));
+        else {
+            const pkStr = fs.readFileSync("./testkey").toString()
+                .replace("0x", "")
+                .replace("0X", "")
+                .trim();
+            const pkHex = Uint8Array.from(Buffer.from(pkStr, 'hex'));
+            return new AptosAccount(pkHex);
+        }
+    })();
     const counterDeployedAddress = counterDeployAccount.address().toString()
 
     // faucet
@@ -90,22 +99,12 @@ describe("layerzero-aptos end-to-end test", () => {
         },
     })
 
-/*
-    const pkStr = fs.readFileSync("./testkey").toString()
-        .replace("0x", "")
-        .replace("0X", "")
-        .trim();
-    const pkHex = Uint8Array.from(Buffer.from(pkStr, 'hex'));
-    const counterDeployAccount = new AptosAccount(pkHex);
-    const counterDeployedAddress = counterDeployAccount.address().toString()
-*/
-
-    const counterModule = new Counter(sdk, counterDeployedAddress)
     const moveflowModule = new Moveflow(sdk, counterDeployedAddress)
-
+/*
+    const counterModule = new Counter(sdk, counterDeployedAddress)
     const oracleModule = new Oracle(sdk, oracleDeployedAddress)
-
     const chainId = 20030
+*/
 
     // let signFuncWithMultipleSigners: MultipleSignFunc
     beforeAll(async () => {
@@ -127,6 +126,7 @@ describe("layerzero-aptos end-to-end test", () => {
                 else
                     return ChainStage.MAINNET;
             })();
+
 /*
             console.log(`layerzero deploy account: ${layerzeroDeployedAddress}`)
             console.log(`oracle deploy account: ${oracleDeployedAddress}`)
@@ -189,9 +189,7 @@ describe("layerzero-aptos end-to-end test", () => {
                     }
                 }),
             )
-
 */
-
 
 
 /*
@@ -235,6 +233,9 @@ describe("layerzero-aptos end-to-end test", () => {
                 expect(fee.fee_per_byte).toEqual(BigInt(0))
             }
 
+            if(env === Environment.LOCAL)
+                await faucet.fundAccount(counterDeployedAddress, 1000000000)
+
             await deployCounter(
                 env,
                 stage,
@@ -242,15 +243,13 @@ describe("layerzero-aptos end-to-end test", () => {
                 layerzeroDeployedAddress,
             )
 */
-
-            await faucet.fundAccount(counterDeployedAddress, 1000000000)
-
             await deployMoveflow(
                 env,
                 stage,
                 counterDeployAccount,
                 layerzeroDeployedAddress,
             );
+
         })
 
         let decodedParams
@@ -258,11 +257,13 @@ describe("layerzero-aptos end-to-end test", () => {
 /*
             const createCounterRe = await counterModule.createCounter(counterDeployAccount, 0);
             console.log("createCounterRe", createCounterRe);
+            const typeinfo = await sdk.LayerzeroModule.Endpoint.getUATypeInfo(counterDeployedAddress)
+            console.log("typeinfo", typeinfo);
 */
 
             const moveflowInit = await moveflowModule.initialize(counterDeployAccount, counterDeployAccount.address(), counterDeployAccount.address());
             console.log("moveflowInit", moveflowInit);
-            // await moveflowModule.register_coin(counterDeployAccount, '0x1::aptos_coin::AptosCoin');
+            await moveflowModule.register_coin(counterDeployAccount, '0x1::aptos_coin::AptosCoin');
         })
     })
 })
