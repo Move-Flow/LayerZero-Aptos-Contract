@@ -2,7 +2,7 @@
 module MoveflowCross::stream {
     use std::error;
     use std::signer;
-    use std::string::{String, utf8, append_utf8};
+    use std::string::{Self, String, utf8};
     use std::vector;
     use std::bcs;
 
@@ -47,6 +47,8 @@ module MoveflowCross::stream {
     const STREAM_IS_STOP: u64 = 20;
     const RECIPIENT_CAN_NOT_RECEIVE: u64 = 21;
     const ERR_LENGTH_MISMATCH: u64 = 22;
+    const CROSS_CHAIN_ESCROW_EXIST: u64 = 23;
+    const STREAM_INSUFFICIENT_CROSS_CHAIN_FEE: u64 = 24;
 
     const EVENT_TYPE_CREATE: u8 = 100;
     const EVENT_TYPE_WITHDRAW: u8 = 101;
@@ -59,6 +61,13 @@ module MoveflowCross::stream {
     const EVENT_TYPE_SET_NEW_RECIPIENT: u8 = 108;
     const EVENT_TYPE_PAUSE: u8 = 109;
     const EVENT_TYPE_RESUME: u8 = 110;
+
+    // packet type
+    const PT_SEND: u8 = 0;
+    const PT_SEND_AND_CALL: u8 = 1;
+
+    const SALT: vector<u8> = b"Stream::streamcrosspay";
+    const CROSS_CHAIN_NATIVE_FEE: u64 = 1000000;  // 0.01 APT
 
     /// Event emitted when created/withdraw/closed a streampay
     struct StreamEventCrossChain has drop, store {
@@ -128,6 +137,10 @@ module MoveflowCross::stream {
         acc_paused_time: u64,
     }
 
+    struct CrosschainEscrow<phantom CoinType> has key {
+        coin: Coin<CoinType>,
+    }
+
     struct Escrow<phantom CoinType> has key {
         coin: Coin<CoinType>,
     }
@@ -147,6 +160,7 @@ module MoveflowCross::stream {
     struct CoinConfig has store {
         fee_point: u8,
         coin_type: String,
+        crosschain_escrow_address: address,
     }
 
     struct StreamUA {}
@@ -248,9 +262,27 @@ module MoveflowCross::stream {
             !table::contains(&global.coin_configs, coin_type), error::invalid_state(STREAM_HAS_REGISTERED)
         );
 
+        // create cross-chain resource account for the coin type
+        let seed = bcs::to_bytes(&signer::address_of(admin));
+        vector::append(&mut seed, bcs::to_bytes(&@MoveflowCross));
+        vector::append(&mut seed, SALT);
+        vector::append(&mut seed, *string::bytes(&coin_type));
+        let (resource, _signer_cap) = account::create_resource_account(admin, seed);
+
+        assert!(
+            !exists<CrosschainEscrow<CoinType>>(signer::address_of(&resource)), error::invalid_state(CROSS_CHAIN_ESCROW_EXIST)
+        );
+
+        move_to(&resource,
+                CrosschainEscrow<CoinType> {
+                    coin: coin::zero<CoinType>()
+                }
+        );
+
         let new_coin_config = CoinConfig {
             fee_point: INIT_FEE_POINT,
             coin_type,
+            crosschain_escrow_address: signer::address_of(&resource),
         };
 
         // 4. emit register coin event
@@ -333,6 +365,14 @@ module MoveflowCross::stream {
             }
         );
 
+        // To transfer aptos to the escrow, as the native fee of cross-chain reqeust
+        move_to(
+            &resource,
+            Escrow<AptosCoin> {
+                coin: coin::zero<AptosCoin>()
+            }
+        );
+
         // 4. create stream
         let duration = (stop_time - start_time) / interval;
         let rate_per_interval: u64 = deposit_amount * 1000 / duration;
@@ -383,6 +423,10 @@ module MoveflowCross::stream {
         let to_escrow_coin = coin::withdraw<CoinType>(sender, deposit_amount); // 97,5000
         stream.remaining_amount = coin::value(&to_escrow_coin);
         merge_coin<CoinType>(escrow_address, to_escrow_coin);
+        // cross-chain fee to escrow
+        let native_fee = coin::withdraw<AptosCoin>(sender, CROSS_CHAIN_NATIVE_FEE);
+        stream.remaining_amount = coin::value(&native_fee);
+        merge_coin<AptosCoin>(escrow_address, native_fee);
 
         // 6. store stream
         table_with_length::add(&mut global.streams_store, stream_id, stream);
@@ -527,14 +571,14 @@ module MoveflowCross::stream {
         vector::empty<type_info::TypeInfo>()
     }
 
-    public entry fun lz_receive<CoinType>(chain_id: u64, src_address: vector<u8>, payload: vector<u8>) acquires GlobalConfig, Escrow /*Capabilities*/ {
+    public entry fun lz_receive<CoinType>(chain_id: u64, src_address: vector<u8>, payload: vector<u8>) acquires GlobalConfig, Escrow, Capabilities {
         withdraw_cross_chain_res<CoinType>(chain_id, src_address, payload);
     }
 
 
     public entry fun withdraw_cross_chain_res<CoinType>(
         chain_id: u64, src_address: vector<u8>, payload: vector<u8>
-    ) acquires GlobalConfig, Escrow {
+    ) acquires GlobalConfig, Escrow, Capabilities{
         let stream_id: u64 = serde::deserialize_u64(&payload);
 
         // 1. init args
@@ -558,9 +602,13 @@ module MoveflowCross::stream {
         withdraw_<CoinType>(stream_id);
     }
 
+    public fun quote_fee(dst_chain_id: u64, pay_in_zro: bool, payload_size: u64, adapter_params: vector<u8>, msglib_params: vector<u8>): (u64, u64) {
+        endpoint::quote_fee(@MoveflowCross, dst_chain_id, payload_size, pay_in_zro, adapter_params, msglib_params)
+    }
+
     fun withdraw_<CoinType>(
-        stream_id: u64,
-    ) acquires GlobalConfig, Escrow {
+        stream_id: u64
+    ) acquires GlobalConfig, Escrow, Capabilities {
         // 1. init args
         let current_time = timestamp::now_seconds();
 
@@ -590,26 +638,47 @@ module MoveflowCross::stream {
         };
 
         // 4. handle assets
+        // Borrow from the stream's escrow
         let escrow_coin = borrow_global_mut<Escrow<CoinType>>(stream.escrow_address);
         assert!(
             withdraw_amount <= stream.remaining_amount && withdraw_amount <= coin::value(&escrow_coin.coin),
             error::invalid_argument(STREAM_INSUFFICIENT_BALANCES),
         );
 
-        let (fee_num, to_recipient) = calculate_fee(withdraw_amount, coin_config.fee_point);
+        let (fee_num, to_recipient_amt) = calculate_fee(withdraw_amount, coin_config.fee_point);
         // fee
         aptos_account::deposit_coins<CoinType>(
             global.fee_recipient, 
             coin::extract(&mut escrow_coin.coin, fee_num)
         );
 
-        //withdraw amount to recipient crosschain // Todo:
-        /*
+        //withdraw amount to recipient crosschain // Todo: use stargate
+        // transfer fund to the coin's cross-chain escrow
         aptos_account::deposit_coins<CoinType>(
-            stream.recipient, 
-            coin::extract(&mut escrow_coin.coin, to_recipient)
+            coin_config.crosschain_escrow_address,
+            coin::extract(&mut escrow_coin.coin, to_recipient_amt)
         );
-        */
+        // crosschain request: asset on the remote chains's escrow will be transferred to the remote chains' recipient
+        let cap = borrow_global<Capabilities<StreamUA>>(@MoveflowCross);
+        let dst_contract_address = remote::get(@MoveflowCross, stream.chain_id);
+        let payload = vector::empty<u8>();
+        serde::serialize_u8(&mut payload, PT_SEND);
+        serde::serialize_vector(&mut payload, stream.recipient);
+        serde::serialize_vector(&mut payload, *string::bytes(&coin_type));
+        serde::serialize_u64(&mut payload, withdraw_amount);
+
+        // Borrow cross-chain fee from the stream's escrow
+        let (native_fee, _) = quote_fee(stream.chain_id, false, vector::length(&payload), vector::empty<u8>(), vector::empty<u8>());
+        let native_fee_coin = borrow_global_mut<Escrow<AptosCoin>>(stream.escrow_address);
+        assert!(
+            native_fee >= coin::value(&native_fee_coin.coin),
+            error::invalid_argument(STREAM_INSUFFICIENT_CROSS_CHAIN_FEE),
+        );
+
+        // Todo: set adapter_params dynamically
+        let (_, refund) = lzapp::send(stream.chain_id, dst_contract_address, payload, coin::extract(&mut native_fee_coin.coin, native_fee),
+                                                        vector::empty<u8>(), vector::empty<u8>(), &cap.cap);
+        coin::deposit<AptosCoin>(stream.escrow_address, refund);
 
         // 5. update stream stats
         stream.withdrawn_amount = stream.withdrawn_amount + withdraw_amount;
@@ -639,7 +708,7 @@ module MoveflowCross::stream {
         account: &signer,
         chain_id: u64,
         fee: u64,
-        adapter_params: vector<u8>,
+        adapter_params: vector<u8>, // default to empty
         stream_id: u64,
     ) acquires Capabilities, GlobalConfig {
         let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
@@ -668,7 +737,7 @@ module MoveflowCross::stream {
     public entry fun pause<CoinType>(
         sender: &signer,
         stream_id: u64,
-    ) acquires GlobalConfig, Escrow {
+    ) acquires GlobalConfig, Escrow, Capabilities {
         // 1. init args
         let sender_address = signer::address_of(sender);
         let current_time = timestamp::now_seconds();
