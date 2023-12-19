@@ -238,7 +238,7 @@ module MoveflowCross::stream {
         );
 
         // 2. set remote remote chain ID and the corresponding contract address on the chain
-        remote::set(admin, remote_chain_id, remote_contract_addr_bytes); // Todo: anything wrong?
+        remote::set(admin, remote_chain_id, remote_contract_addr_bytes);
     }
 
         /// register a coin type for streampay and initialize it
@@ -515,7 +515,7 @@ module MoveflowCross::stream {
     public entry fun close<CoinType>(
         sender: &signer,
         stream_id: u64,
-    ) acquires GlobalConfig, Escrow {
+    ) acquires GlobalConfig, Escrow, Capabilities {
         // 1. init args
         let sender_address = signer::address_of(sender);
         // let current_time = timestamp::now_seconds();
@@ -528,14 +528,19 @@ module MoveflowCross::stream {
         assert_non_exist_stream(global, stream_id);
         let stream = table_with_length::borrow(&global.streams_store, stream_id);
         // assert!(current_time < stream.stop_time, error::invalid_state(STREAM_IS_STOP));
-        // assert!(closeable(stream, sender_address), error::invalid_argument(STREAM_REJECT_CLOSE)); // Todo:
+        assert!(closeable(stream, sender_address), error::invalid_argument(STREAM_REJECT_CLOSE));
         assert!(!stream.closed, error::invalid_state(STREAM_IS_STOP));
         assert!(!stream.pauseInfo.paused, error::invalid_state(STREAM_PAUSE_STATUS));
 
-        // 4. withdraw // Todo:
-        // if (can_receive_coin_transfer<CoinType>(stream.recipient)){
-        //     withdraw_<CoinType>(stream_id);
-        // };
+        // 4. withdraw
+        let coin_type = type_info::type_name<CoinType>();
+        assert!(
+            table::contains(&global.coin_configs, coin_type), error::not_found(COIN_CONF_NOT_FOUND),
+        );
+        let coin_config = table::borrow(&global.coin_configs, coin_type);
+        if (can_receive_coin_transfer<CoinType>(coin_config.crosschain_escrow_address)){
+            withdraw_<CoinType>(stream_id);
+        };
         let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
         let stream = table_with_length::borrow_mut(&mut global.streams_store, stream_id);
 
@@ -999,7 +1004,7 @@ module MoveflowCross::stream {
 
     fun recipient_modifiable(stream: &StreamInfoCrossChain, sender: address): bool {
         // stream.recipient == sender && stream.feature_info.recipient_modifiable // Todo:
-        true
+        false
     }
 
     fun check_operator(
