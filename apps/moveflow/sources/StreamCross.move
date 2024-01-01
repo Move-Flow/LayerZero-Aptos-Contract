@@ -9,7 +9,7 @@ module MoveflowCross::stream {
     use aptos_std::event::{Self, EventHandle};
     use aptos_std::table::{Self, Table};
     use aptos_std::table_with_length::{Self, TableWithLength};
-    use aptos_std::type_info;
+    use aptos_std::type_info::{Self, TypeInfo};
     use aptos_framework::account;
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::timestamp;
@@ -20,6 +20,7 @@ module MoveflowCross::stream {
     use layerzero::lzapp;
     use layerzero::remote;
     use layerzero_common::serde;
+    use layerzero_common::utils::{vector_slice, assert_u16};
 
     const MIN_DEPOSIT_BALANCE: u64 = 10000; // 0.0001 APT(decimals=8)
     const MIN_RATE_PER_INTERVAL: u64 = 1000; // 0.00000001 APT(decimals=8)
@@ -49,6 +50,7 @@ module MoveflowCross::stream {
     const ERR_LENGTH_MISMATCH: u64 = 22;
     const CROSS_CHAIN_ESCROW_EXIST: u64 = 23;
     const STREAM_INSUFFICIENT_CROSS_CHAIN_FEE: u64 = 24;
+    const CX_CHAIN_INVALID_PACKET_TYPE: u64 = 25;
 
     const EVENT_TYPE_CREATE: u8 = 100;
     const EVENT_TYPE_WITHDRAW: u8 = 101;
@@ -62,9 +64,10 @@ module MoveflowCross::stream {
     const EVENT_TYPE_PAUSE: u8 = 109;
     const EVENT_TYPE_RESUME: u8 = 110;
 
-    // packet type
-    const PT_SEND: u8 = 0;
-    const PT_SEND_AND_CALL: u8 = 1;
+    // paceket type, in line with packet type in EVM
+    const PRECEIVE: u8 = 0;
+    const PSEND: u8 = 1;
+
 
     const SALT: vector<u8> = b"Stream::streamcrosspay";
     const CROSS_CHAIN_NATIVE_FEE: u64 = 1000000;  // 0.01 APT
@@ -145,6 +148,18 @@ module MoveflowCross::stream {
         coin: Coin<CoinType>,
     }
 
+    struct Path has copy, drop {
+        remote_chain_id: u64,
+        local_coin_byte: vector<u8>,
+    }
+
+    struct CoinTypeStore has key {
+        // (remote chain id + local coin type in byte) => remote coin address in byte
+        remote_coin_lookup: Table<Path, vector<u8>>,
+        // local coin type in byte => local coin type,
+        local_coin_lookup: Table<vector<u8>, TypeInfo>,
+    }
+
     struct GlobalConfig has key {
         fee_recipient: address,
         admin: address,
@@ -170,6 +185,7 @@ module MoveflowCross::stream {
     }
 
     /// set fee_recipient and admin
+    /// register UA
     public entry fun initialize(
         owner: &signer,
         fee_recipient: address,
@@ -203,6 +219,10 @@ module MoveflowCross::stream {
         remote::init(owner);
 
         move_to(owner, Capabilities { cap });
+        move_to(owner, CoinTypeStore {
+            remote_coin_lookup: table::new(),
+            local_coin_lookup: table::new(),
+        })
     }
 
     /// Before sending messages on LayerZero you need to register your UA(user application).
@@ -300,6 +320,33 @@ module MoveflowCross::stream {
 
         // 5. store coin config
         table::add(&mut global.coin_configs, coin_type, new_coin_config);
+    }
+
+    // Set (remote chain id + local coin type in byte) => remote coin address in byte
+    // Set local coin type => local coin type
+    public entry fun set_coin_map<CoinType>(
+        owner: &signer,
+        remote_chain_id: u64,
+        remote_coin_addr: vector<u8>,
+    ) acquires CoinTypeStore {
+        // 1. check args
+        let owner_addr = signer::address_of(owner);
+        assert!(
+            @MoveflowCross == owner_addr,
+            error::permission_denied(STREAM_PERMISSION_DENIED),
+        );
+
+        assert_u16(remote_chain_id);
+
+        let coin_type = type_info::type_name<CoinType>();
+        // Todo: Assert the coin is registered
+        let local_coin_byte = vector::empty<u8>();
+        serde::serialize_vector(&mut local_coin_byte, *string::bytes(&coin_type));
+
+        let type_store = borrow_global_mut<CoinTypeStore>(@MoveflowCross);
+
+        table::add(&mut type_store.remote_coin_lookup, Path { remote_chain_id, local_coin_byte}, remote_coin_addr);
+        table::add(&mut type_store.local_coin_lookup, local_coin_byte, type_info::type_of<CoinType>());
     }
 
     /// create a stream
@@ -515,7 +562,7 @@ module MoveflowCross::stream {
     public entry fun close<CoinType>(
         sender: &signer,
         stream_id: u64,
-    ) acquires GlobalConfig, Escrow, Capabilities {
+    ) acquires GlobalConfig, Escrow, Capabilities, CoinTypeStore {
         // 1. init args
         let sender_address = signer::address_of(sender);
         // let current_time = timestamp::now_seconds();
@@ -571,20 +618,40 @@ module MoveflowCross::stream {
         );
     }
 
-    // Todo: how to use lz_receive_types
-    public fun lz_receive_types(_src_chain_id: u64, _src_address: vector<u8>, _payload: vector<u8>) : vector<type_info::TypeInfo> {
-        vector::empty<type_info::TypeInfo>()
+    // Retrieve aptos coin type by in a stream 
+    public fun lz_receive_types(
+        src_chain_id: u64, src_address: vector<u8>, payload: vector<u8>
+    ) : vector<type_info::TypeInfo> 
+    acquires GlobalConfig, CoinTypeStore {
+        let packet_type = serde::deserialize_u8(&vector_slice(&payload, 0, 1));
+        assert!(packet_type == PRECEIVE, error::aborted(CX_CHAIN_INVALID_PACKET_TYPE));
+        let stream_id = vector_slice(&payload, 1, 9);
+        let stream_id: u64 = serde::deserialize_u64(&stream_id);
+        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+        let stream = table_with_length::borrow_mut(&mut global.streams_store, stream_id);
+        let local_coin_byte = vector::empty<u8>();
+        serde::serialize_vector(&mut local_coin_byte, *string::bytes(&stream.coin_type));
+
+        let type_store = borrow_global<CoinTypeStore>(@MoveflowCross);
+        let coin_type_info = table::borrow(&type_store.local_coin_lookup, local_coin_byte);
+        vector::singleton<TypeInfo>(*coin_type_info)
     }
 
-    public entry fun lz_receive<CoinType>(chain_id: u64, src_address: vector<u8>, payload: vector<u8>) acquires GlobalConfig, Escrow, Capabilities {
+    public entry fun lz_receive<CoinType>(
+        chain_id: u64, src_address: vector<u8>, payload: vector<u8>
+    ) acquires GlobalConfig, Escrow, Capabilities, CoinTypeStore {
         withdraw_cross_chain_res<CoinType>(chain_id, src_address, payload);
     }
 
 
     public entry fun withdraw_cross_chain_res<CoinType>(
         chain_id: u64, src_address: vector<u8>, payload: vector<u8>
-    ) acquires GlobalConfig, Escrow, Capabilities{
-        let stream_id: u64 = serde::deserialize_u64(&payload);
+    ) acquires GlobalConfig, Escrow, Capabilities, CoinTypeStore{
+        let packet_type = serde::deserialize_u8(&vector_slice(&payload, 0, 1));
+        assert!(packet_type == PRECEIVE, error::aborted(CX_CHAIN_INVALID_PACKET_TYPE));
+
+        let stream_id = vector_slice(&payload, 1, 9);
+        let stream_id: u64 = serde::deserialize_u64(&stream_id);
 
         // 1. init args
         let current_time = timestamp::now_seconds();
@@ -613,7 +680,7 @@ module MoveflowCross::stream {
 
     fun withdraw_<CoinType>(
         stream_id: u64
-    ) acquires GlobalConfig, Escrow, Capabilities {
+    ) acquires GlobalConfig, Escrow, Capabilities, CoinTypeStore {
         // 1. init args
         let current_time = timestamp::now_seconds();
 
@@ -666,10 +733,17 @@ module MoveflowCross::stream {
         // crosschain request: asset on the remote chains's escrow will be transferred to the remote chains' recipient
         let cap = borrow_global<Capabilities<StreamUA>>(@MoveflowCross);
         let dst_contract_address = remote::get(@MoveflowCross, stream.chain_id);
+
+        // get remote coin address
+        let type_store = borrow_global_mut<CoinTypeStore>(@MoveflowCross);
+        let local_coin_byte = vector::empty<u8>();
+        serde::serialize_vector(&mut local_coin_byte, *string::bytes(&coin_type));
+        let remote_coin_byte = table::borrow(&type_store.remote_coin_lookup, Path { remote_chain_id: stream.chain_id, local_coin_byte });
+
         let payload = vector::empty<u8>();
-        serde::serialize_u8(&mut payload, PT_SEND);
+        serde::serialize_u8(&mut payload, PSEND);
         serde::serialize_vector(&mut payload, stream.recipient);
-        serde::serialize_vector(&mut payload, *string::bytes(&coin_type));
+        serde::serialize_vector(&mut payload, *remote_coin_byte);
         serde::serialize_u64(&mut payload, withdraw_amount);
 
         // Borrow cross-chain fee from the stream's escrow
@@ -742,7 +816,7 @@ module MoveflowCross::stream {
     public entry fun pause<CoinType>(
         sender: &signer,
         stream_id: u64,
-    ) acquires GlobalConfig, Escrow, Capabilities {
+    ) acquires GlobalConfig, Escrow, Capabilities, CoinTypeStore {
         // 1. init args
         let sender_address = signer::address_of(sender);
         let current_time = timestamp::now_seconds();

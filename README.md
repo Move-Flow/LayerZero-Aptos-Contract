@@ -40,16 +40,6 @@ npm install
 npx jest ./tests/omniCounter.test.ts
 npx jest ./tests/bridge.test.ts
 ```
-
-# Moveflow CrossChain
-## Testnet
-### Aptos
-* Owner: 0xdbf4ebd276c84e88f0a04a4b0d26241f654ad411c250afa3a888eb3f0011486a
-* Contract: 0xdbf4ebd276c84e88f0a04a4b0d26241f654ad411c250afa3a888eb3f0011486a
-### BSC
-* Owner: 0x569595234428B29F400a38B3E3DA09eBDBcCBC44
-* Contract: 0x7F384B4a58df3e38CDF74727Cfbf9D22a65aCE1f
-
 # Omnicounter
 ## Testnet
 ### Fuji
