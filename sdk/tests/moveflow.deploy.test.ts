@@ -71,7 +71,10 @@ describe("layerzero-aptos end-to-end test", () => {
         })
 
         test("register ua", async () => {
-            const moveflowInit = await moveflowModule.initialize(counterDeployAccount, counterDeployAccount.address(), counterDeployAccount.address());
+            const moveflowInit = await moveflowModule.initialize(
+                counterDeployAccount, 
+                counterDeployAccount.address(), 
+                counterDeployAccount.address());
             console.log("moveflowInit", moveflowInit);
             await moveflowModule.register_coin(counterDeployAccount, '0x1::aptos_coin::AptosCoin');
         })

@@ -148,7 +148,7 @@ module MoveflowCross::stream {
         coin: Coin<CoinType>,
     }
 
-    struct Path has copy, drop {
+    struct Path has store, key, copy, drop { // Todo: If the capabilities are over qualified?
         remote_chain_id: u64,
         local_coin_byte: vector<u8>,
     }
@@ -220,8 +220,8 @@ module MoveflowCross::stream {
 
         move_to(owner, Capabilities { cap });
         move_to(owner, CoinTypeStore {
-            remote_coin_lookup: table::new(),
-            local_coin_lookup: table::new(),
+            remote_coin_lookup: table::new<Path, vector<u8>>(),
+            local_coin_lookup: table::new<vector<u8>, TypeInfo>(),
         })
     }
 
@@ -345,8 +345,9 @@ module MoveflowCross::stream {
 
         let type_store = borrow_global_mut<CoinTypeStore>(@MoveflowCross);
 
-        table::add(&mut type_store.remote_coin_lookup, Path { remote_chain_id, local_coin_byte}, remote_coin_addr);
-        table::add(&mut type_store.local_coin_lookup, local_coin_byte, type_info::type_of<CoinType>());
+        // Todo: use upsert or add?
+        table::upsert(&mut type_store.remote_coin_lookup, Path { remote_chain_id, local_coin_byte}, remote_coin_addr);
+        table::upsert(&mut type_store.local_coin_lookup, local_coin_byte, type_info::type_of<CoinType>());
     }
 
     /// create a stream

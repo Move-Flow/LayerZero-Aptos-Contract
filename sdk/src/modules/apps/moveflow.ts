@@ -48,14 +48,16 @@ export class Moveflow {
         return BigInt(i)
     }
 
-    async createCounter(
+    async setCoinMap(
         signer: aptos.AptosAccount,
-        i: aptos.BCS.Uint64 | aptos.BCS.Uint32,
+        remoteChainId: aptos.BCS.Uint16,
+        remoteCoinAddr: aptos.BCS.Bytes,
+        coinType: string,
     ): Promise<aptos.Types.Transaction> {
         const transaction: aptos.Types.EntryFunctionPayload = {
-            function: `${this.address}::counter::create_counter`,
-            type_arguments: [],
-            arguments: [i],
+            function: `${this.address}::stream::set_coin_map`,
+            type_arguments: [coinType],
+            arguments: [remoteChainId, remoteCoinAddr],
         }
 
         return this.sdk.sendAndConfirmTransaction(signer, transaction)
