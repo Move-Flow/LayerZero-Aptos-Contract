@@ -87,7 +87,10 @@ aptos move run \
   * `cd sdk; npx jest ./tests/moveflow.setRemote.test.ts`, what the script should have done：
     * `set_coin_map`
     * `setRemote`
-* Register remote contract
+
+# CrossChain Tx
+## EVM
+* 
 
 # Moveflow Address
 ## Testnet4

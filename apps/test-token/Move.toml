@@ -1,0 +1,6 @@
+[package]
+name = "mycoin"
+version = "0.2.0"
+
+[addresses]
+mycoin = "_"
