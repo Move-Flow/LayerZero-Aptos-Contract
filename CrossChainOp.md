@@ -73,8 +73,6 @@ aptos move run \
     * Register MFL
     * Deposit MFL to cx chain pool
     * set trusted remote
-* Withdraw from remote chain
-  * `npx hardhat --network bsc-testnet withdrawFrom.Aptos`
 
 ## Aptos
 * Set trusted remote
@@ -83,20 +81,28 @@ aptos move run \
     * `mflOwnerAddress`
     * `rmtEvmContractAddr`
     * `rmtMflTokenAddress`
+    * `rmtEvmReceiverAddr`
     * `remoteChainId`
+  * MFL Token owner transfers some MFL to Contract Owner.
   * `cd sdk; npx jest ./tests/moveflow.setRemote.test.ts`, what the script should have done：
+    * `Register MFL on Moveflow contract`
     * `set_coin_map`
     * `setRemote`
+    * Create a stream whose receiver is an EVM user.
 
 # CrossChain Tx
 ## EVM
-* 
+* Withdraw from aptos chain
+  * Set the following variables in `tasks/withdrawFrom.Aptos.js` according to deployment above and env
+    * `localContractAdd`
+    * `remoteChainId`
+  * `npx hardhat --network bsc-testnet withdrawFrom.Aptos`
 
 # Moveflow Address
 ## Testnet4
 ### Aptos
-* Owner: 0x0b512a1fa6a486e0876ebffbf5206fcf360300bd832c86fc76571c698e258637
-* Contract Creation Tx: 0x75cee30799f3503e3ef156de58ba069586236aaab1ab1414fa4b9b8cc54dcc64
+* Owner: 0x3ff4f23174fc0ac9db968ea4522f698609ce8a25c794b0a6d24029955b728ad1
+* Contract Creation Tx: 0x4e17e777847536eb84ffa421f289ea1806b57f3e67afebde5bc8249fb79a7bf8
 * MFL Token Tx: 0x27170e998c12b909e26d50d218765e8a06f6dd2db3fd9c26a36c78557d3cfc06
 * MFL Token owner: 0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886
 

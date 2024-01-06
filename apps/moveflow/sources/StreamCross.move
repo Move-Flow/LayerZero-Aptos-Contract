@@ -70,7 +70,7 @@ module MoveflowCross::stream {
 
 
     const SALT: vector<u8> = b"Stream::streamcrosspay";
-    const CROSS_CHAIN_NATIVE_FEE: u64 = 1000000;  // 0.01 APT
+    const CROSS_CHAIN_NATIVE_FEE: u64 = 30000000;  // 0.3 APT 
 
     /// Event emitted when created/withdraw/closed a streampay
     struct StreamEventCrossChain has drop, store {
@@ -473,7 +473,6 @@ module MoveflowCross::stream {
         merge_coin<CoinType>(escrow_address, to_escrow_coin);
         // cross-chain fee to escrow
         let native_fee = coin::withdraw<AptosCoin>(sender, CROSS_CHAIN_NATIVE_FEE);
-        stream.remaining_amount = coin::value(&native_fee);
         merge_coin<AptosCoin>(escrow_address, native_fee);
 
         // 6. store stream
@@ -747,16 +746,16 @@ module MoveflowCross::stream {
         serde::serialize_vector(&mut payload, *remote_coin_byte);
         serde::serialize_u64(&mut payload, withdraw_amount);
 
-        // Borrow cross-chain fee from the stream's escrow
-        let (native_fee, _) = quote_fee(stream.chain_id, false, vector::length(&payload), vector::empty<u8>(), vector::empty<u8>());
-        let native_fee_coin = borrow_global_mut<Escrow<AptosCoin>>(stream.escrow_address);
+        // Borrow cross-chain fee from the stream's escrow // Todo: borrow native fee from caller 
+        let (native_fee_quote, _) = quote_fee(stream.chain_id, false, vector::length(&payload), vector::empty<u8>(), vector::empty<u8>());
+        let native_fee_provided = borrow_global_mut<Escrow<AptosCoin>>(stream.escrow_address);
         assert!(
-            native_fee >= coin::value(&native_fee_coin.coin),
+            native_fee_quote <= coin::value(&native_fee_provided.coin),
             error::invalid_argument(STREAM_INSUFFICIENT_CROSS_CHAIN_FEE),
         );
 
         // Todo: set adapter_params dynamically
-        let (_, refund) = lzapp::send(stream.chain_id, dst_contract_address, payload, coin::extract(&mut native_fee_coin.coin, native_fee),
+        let (_, refund) = lzapp::send(stream.chain_id, dst_contract_address, payload, coin::extract(&mut native_fee_provided.coin, native_fee_quote),
                                                         vector::empty<u8>(), vector::empty<u8>(), &cap.cap);
         coin::deposit<AptosCoin>(stream.escrow_address, refund);
 
