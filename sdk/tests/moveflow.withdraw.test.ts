@@ -8,6 +8,7 @@ import { ChainStage } from "@layerzerolabs/lz-sdk"
 import {Moveflow} from "../src/modules/apps/moveflow";
 import {AptosAccount, AptosClient, Types} from "aptos";
 import fs from "fs";
+import uint64be from 'uint64be';
 
 const env = Environment.TESTNET
 
@@ -18,7 +19,7 @@ const rmtEvmContractAddr = "0x0B858B1C52e49DF07fd96b87CF5DA7838f170c04";
 const rmtEvmReceiverAddr = "0xA8c4AAE4ce759072D933bD4a51172257622eF128";
 const rmtMflTokenAddress = "0xDE3a190D9D26A8271Ae9C27573c03094A8A2c449";
 const remoteChainId = 10102; // BSC
-const MIN_DEPOSIT_BALANCE = "1000000";
+const streamId = 0;
 
 describe("layerzero-aptos end-to-end test", () => {
     // counter account
@@ -80,7 +81,7 @@ describe("layerzero-aptos end-to-end test", () => {
             const typeinfo = await sdk.LayerzeroModule.Endpoint.getUATypeInfo(counterDeployedAddress);
             console.log("typeinfo", typeinfo);
 
-            // Register MFL
+/*               // Register MFL
             const registerMFLre = await moveflowModule.register_coin(counterDeployAccount, aptosMflCoinType);
             console.log("registerMFLre", registerMFLre);
 
@@ -144,7 +145,7 @@ describe("layerzero-aptos end-to-end test", () => {
             const aptCoinRe = textDecoder.decode(aptos.HexString.ensure(local_coin_lookup_re.struct_name).toUint8Array());
             expect(local_coin_lookup_re.account_address).toEqual(mflOwnerAddress);
             expect(aptCoinModuleRe).toEqual("Coins");
-            expect(aptCoinRe).toEqual("MFL");      
+            expect(aptCoinRe).toEqual("MFL"); */
  
             const now = new Date();
             const year = now.getFullYear(); // Gets the current year (e.g., 2023)
@@ -155,24 +156,26 @@ describe("layerzero-aptos end-to-end test", () => {
             const tsSecond = Math.floor(now.getTime() / 1000);
             const remark = `${tsSecond}rm`; 
             console.log(`Start creating stream: ${strName}-${remark}`);
-            // Create a new stream
+      
+            // Withdraw from a stream
+            const uint8Array = uint64be.encode(streamId);
+            const funPayload = [0].concat(Array.from(uint8Array))
+            console.log("funPayload", funPayload);
+
             let payload: Types.TransactionPayload_EntryFunctionPayload = {
               type: "entry_function_payload",
-              function: `${counterDeployedAddress}::stream::create_cross_chain`,
+              function: `${counterDeployedAddress}::stream::withdraw_cross_chain_res`,
               type_arguments: [aptosMflCoinType],
               arguments: [
-                strName, 
-                remark,
-                aptos.HexString.ensure(rmtEvmReceiverAddr).toUint8Array(), 
-                MIN_DEPOSIT_BALANCE,
-                tsSecond, tsSecond+1000, 
-                "100", true, true, false, remoteChainId],
+                remoteChainId,
+                aptos.HexString.ensure(rmtEvmContractAddr).toUint8Array(), 
+                funPayload],
             };
             let txnRequest = await client.generateTransaction(counterDeployedAddress, payload);
             let signedTxn = await client.signTransaction(counterDeployAccount, txnRequest);
             let transactionRes = await client.submitTransaction(signedTxn);
-            const createStreamRe = await client.waitForTransactionWithResult(transactionRes.hash, {checkSuccess: true});
-            console.log("createStreamRe", createStreamRe);
+            const withdStreamRe = await client.waitForTransactionWithResult(transactionRes.hash, {checkSuccess: true});
+            console.log("withdStreamRe", withdStreamRe);
         })
     })
 })

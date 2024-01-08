@@ -757,7 +757,7 @@ module MoveflowCross::stream {
         // Todo: set adapter_params dynamically
         let (_, refund) = lzapp::send(stream.chain_id, dst_contract_address, payload, coin::extract(&mut native_fee_provided.coin, native_fee_quote),
                                                         vector::empty<u8>(), vector::empty<u8>(), &cap.cap);
-        coin::deposit<AptosCoin>(stream.escrow_address, refund);
+        merge_coin<AptosCoin>(stream.escrow_address, refund);
 
         // 5. update stream stats
         stream.withdrawn_amount = stream.withdrawn_amount + withdraw_amount;

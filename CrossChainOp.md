@@ -75,7 +75,7 @@ aptos move run \
     * set trusted remote
 
 ## Aptos
-* Set trusted remote
+* Init
   * Set the following variables in `sdk/tests/moveflow.setRemote.test.ts` according to deployment above and env
     * `layerzeroDeployedAddress`
     * `mflOwnerAddress`
@@ -98,11 +98,26 @@ aptos move run \
     * `remoteChainId`
   * `npx hardhat --network bsc-testnet withdrawFrom.Aptos`
 
-# Moveflow Address
+# Tx Data Search
+## Tools
+* Layerzero explorer:
+  * testnet.layerzeroscan.com
+* BSC explorer:
+  * testnet.bscscan.com
+* Aptos explorer:
+  * explorer.aptoslabs.com
+* EVM Tx Analysis
+  * dashboard.tenderly.co
+## Accounts
+### Aptos
+* Lz module
+  * Testnet: 0x1759cc0d3161f1eb79f65847d4feb9d1f74fb79014698a23b16b28b9cd4c37e3
+
+# Dev Address
 ## Testnet4
 ### Aptos
-* Owner: 0x3ff4f23174fc0ac9db968ea4522f698609ce8a25c794b0a6d24029955b728ad1
-* Contract Creation Tx: 0x4e17e777847536eb84ffa421f289ea1806b57f3e67afebde5bc8249fb79a7bf8
+* Owner: 0x01a4bb54c4c053d47c9f812cc143c6a83028e2df5655d2be65dfe707b77630d4
+* Contract Creation Tx: 0xf39be04e1151f7fb26f053fe10da002087c2b2f9d8fe974f0c3867de46e5f6e3
 * MFL Token Tx: 0x27170e998c12b909e26d50d218765e8a06f6dd2db3fd9c26a36c78557d3cfc06
 * MFL Token owner: 0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886
 
