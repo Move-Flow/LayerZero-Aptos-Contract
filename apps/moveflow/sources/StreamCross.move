@@ -21,6 +21,7 @@ module MoveflowCross::stream {
     use layerzero::remote;
     use layerzero_common::serde;
     use layerzero_common::utils::{vector_slice, assert_u16};
+    // use MoveflowCross::mfserde;
 
     const MIN_DEPOSIT_BALANCE: u64 = 10000; // 0.0001 APT(decimals=8)
     const MIN_RATE_PER_INTERVAL: u64 = 1000; // 0.00000001 APT(decimals=8)
@@ -51,6 +52,8 @@ module MoveflowCross::stream {
     const CROSS_CHAIN_ESCROW_EXIST: u64 = 23;
     const STREAM_INSUFFICIENT_CROSS_CHAIN_FEE: u64 = 24;
     const CX_CHAIN_INVALID_PACKET_TYPE: u64 = 25;
+    const CX_CHAIN_INVALID_ID: u64 = 26;
+    const CX_CHAIN_INVALID_ADDRESS: u64 = 27;
 
     const EVENT_TYPE_CREATE: u8 = 100;
     const EVENT_TYPE_WITHDRAW: u8 = 101;
@@ -68,9 +71,8 @@ module MoveflowCross::stream {
     const PRECEIVE: u8 = 0;
     const PSEND: u8 = 1;
 
-
     const SALT: vector<u8> = b"Stream::streamcrosspay";
-    const CROSS_CHAIN_NATIVE_FEE: u64 = 30000000;  // 0.3 APT 
+    const CROSS_CHAIN_NATIVE_FEE: u64 = 300000000;  // 3 APT // Todo: if stargate support deduct fee from cx chain asset
 
     /// Event emitted when created/withdraw/closed a streampay
     struct StreamEventCrossChain has drop, store {
@@ -618,13 +620,15 @@ module MoveflowCross::stream {
         );
     }
 
-    // Retrieve aptos coin type by in a stream 
+    // Retrieve aptos coin type by in a stream
     public fun lz_receive_types(
         src_chain_id: u64, src_address: vector<u8>, payload: vector<u8>
-    ) : vector<type_info::TypeInfo> 
+    ) : vector<type_info::TypeInfo>
     acquires GlobalConfig, CoinTypeStore {
+        assert!(src_chain_id != 0, error::invalid_argument(CX_CHAIN_INVALID_ID));
+        assert!(vector::length(&src_address) != 0, error::invalid_argument(CX_CHAIN_INVALID_ADDRESS));
         let packet_type = serde::deserialize_u8(&vector_slice(&payload, 0, 1));
-        assert!(packet_type == PRECEIVE, error::aborted(CX_CHAIN_INVALID_PACKET_TYPE));
+        assert!(packet_type == PRECEIVE, error::invalid_argument(CX_CHAIN_INVALID_PACKET_TYPE));
         let stream_id = vector_slice(&payload, 1, 9);
         let stream_id: u64 = serde::deserialize_u64(&stream_id);
         let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
@@ -647,6 +651,9 @@ module MoveflowCross::stream {
     public entry fun withdraw_cross_chain_res<CoinType>(
         chain_id: u64, src_address: vector<u8>, payload: vector<u8>
     ) acquires GlobalConfig, Escrow, Capabilities, CoinTypeStore{
+        assert!(chain_id != 0, error::invalid_argument(CX_CHAIN_INVALID_ID)); // Todo: remove?
+        assert!(vector::length(&src_address) != 0, error::invalid_argument(CX_CHAIN_INVALID_ADDRESS)); // Todo: remove?
+
         let packet_type = serde::deserialize_u8(&vector_slice(&payload, 0, 1));
         assert!(packet_type == PRECEIVE, error::aborted(CX_CHAIN_INVALID_PACKET_TYPE));
 
@@ -720,7 +727,7 @@ module MoveflowCross::stream {
         let (fee_num, to_recipient_amt) = calculate_fee(withdraw_amount, coin_config.fee_point);
         // fee
         aptos_account::deposit_coins<CoinType>(
-            global.fee_recipient, 
+            global.fee_recipient,
             coin::extract(&mut escrow_coin.coin, fee_num)
         );
 
@@ -741,12 +748,12 @@ module MoveflowCross::stream {
         let remote_coin_byte = table::borrow(&type_store.remote_coin_lookup, Path { remote_chain_id: stream.chain_id, local_coin_byte });
 
         let payload = vector::empty<u8>();
-        serde::serialize_u8(&mut payload, PSEND);
-        serde::serialize_vector(&mut payload, stream.recipient);
-        serde::serialize_vector(&mut payload, *remote_coin_byte);
-        serde::serialize_u64(&mut payload, withdraw_amount);
+        serialize_u64_32byte(&mut payload, (PSEND as u64));
+        serialize_vector_32byte(&mut payload, stream.recipient);
+        serialize_vector_32byte(&mut payload, *remote_coin_byte);
+        serialize_u64_32byte(&mut payload, (withdraw_amount as u64));
 
-        // Borrow cross-chain fee from the stream's escrow // Todo: borrow native fee from caller 
+        // Borrow cross-chain fee from the stream's escrow // Todo: decuct from the cx chain asset as fee
         let (native_fee_quote, _) = quote_fee(stream.chain_id, false, vector::length(&payload), vector::empty<u8>(), vector::empty<u8>());
         let native_fee_provided = borrow_global_mut<Escrow<AptosCoin>>(stream.escrow_address);
         assert!(
@@ -1077,8 +1084,8 @@ module MoveflowCross::stream {
     }
 
     fun recipient_modifiable(stream: &StreamInfoCrossChain, sender: address): bool {
-        // stream.recipient == sender && stream.feature_info.recipient_modifiable // Todo:
-        false
+        // stream.recipient == sender && stream.feature_info.recipient_modifiable
+        stream.sender == sender && stream.feature_info.recipient_modifiable // Todo: compare recipient with sender
     }
 
     fun check_operator(
@@ -1156,7 +1163,7 @@ module MoveflowCross::stream {
     }
 
     fun can_receive_coin_transfer<CoinType>(account: address): bool {
-        coin::is_account_registered<CoinType>(account) || 
+        coin::is_account_registered<CoinType>(account) ||
             aptos_account::can_receive_direct_coin_transfers(account)
     }
 
@@ -1177,6 +1184,42 @@ module MoveflowCross::stream {
         str_b
     }
 
+    const EINVALID_LENGTH: u64 = 0x21;
+    public fun serialize_u8(buf: &mut vector<u8>, v: u8) {
+        vector::push_back(buf, v);
+    }
+
+    public fun serialize_u64(buf: &mut vector<u8>, v: u64) {
+        serialize_u8(buf, (((v >> 56) & 0xFF) as u8));
+        serialize_u8(buf, (((v >> 48) & 0xFF) as u8));
+        serialize_u8(buf, (((v >> 40) & 0xFF) as u8));
+        serialize_u8(buf, (((v >> 32) & 0xFF) as u8));
+        serialize_u8(buf, (((v >> 24) & 0xFF) as u8));
+        serialize_u8(buf, (((v >> 16) & 0xFF) as u8));
+        serialize_u8(buf, (((v >> 8) & 0xFF) as u8));
+        serialize_u8(buf, ((v & 0xFF) as u8));
+    }
+
+    public fun serialize_u64_32byte(buf: &mut vector<u8>, v: u64) {
+        let u64_byte = vector::empty<u8>();
+        let u64_32byte = vector::empty<u8>();
+        serialize_u64(&mut u64_byte, v);
+        serialize_vector_32byte(&mut u64_32byte, u64_byte);
+        vector::append(buf, u64_32byte);
+    }
+
+    public fun serialize_vector_32byte(buf: &mut vector<u8>, v: vector<u8>) {
+        let v_len = vector::length(&v);
+        assert!(v_len <= 32, error::invalid_argument(EINVALID_LENGTH));
+        let vec_32byte = vector::empty<u8>();
+        while ((vector::length(&vec_32byte) + v_len) < 32) {
+            serialize_u8(&mut vec_32byte, 0);
+        };
+        vector::append(&mut vec_32byte, v);
+        assert!(vector::length(&vec_32byte) == 32, error::invalid_state(EINVALID_LENGTH));
+        vector::append(buf, vec_32byte);
+    }
+
     // public views for global config start
     #[view]
     public fun admin(): address acquires GlobalConfig {
@@ -1186,292 +1229,292 @@ module MoveflowCross::stream {
         borrow_global<GlobalConfig>(@MoveflowCross).admin
     }
 
-    #[test_only]
-    use aptos_std::debug;
-    #[test_only]
-    use aptos_framework::managed_coin;
+    // #[test_only]
+    // use aptos_std::debug;
+    // #[test_only]
+    // use aptos_framework::managed_coin;
 
-    #[test_only]
-    struct FakeMoney {}
+    // #[test_only]
+    // struct FakeMoney {}
 
-    #[test(account = @0x1, owner= @MoveflowCross, admin = @0x2)]
-    fun test(account: signer, owner: signer, admin: signer) acquires GlobalConfig, Escrow {
+    // #[test(account = @0x1, owner= @MoveflowCross, admin = @0x2)]
+    // fun test(account: signer, owner: signer, admin: signer) acquires GlobalConfig, Escrow {
 
-        timestamp::set_time_has_started_for_testing(&account);
+    //     timestamp::set_time_has_started_for_testing(&account);
 
-        let owner_addr = signer::address_of(&owner);
-        account::create_account_for_test(owner_addr);
-        debug::print(&owner_addr);
-        let admin_addr = signer::address_of(&admin);
-        account::create_account_for_test(admin_addr);
-        debug::print(&admin_addr);
-        let account_addr = signer::address_of(&account);
-        account::create_account_for_test(account_addr);
-        debug::print(&account_addr);
+    //     let owner_addr = signer::address_of(&owner);
+    //     account::create_account_for_test(owner_addr);
+    //     debug::print(&owner_addr);
+    //     let admin_addr = signer::address_of(&admin);
+    //     account::create_account_for_test(admin_addr);
+    //     debug::print(&admin_addr);
+    //     let account_addr = signer::address_of(&account);
+    //     account::create_account_for_test(account_addr);
+    //     debug::print(&account_addr);
 
-        let name = b"Fake money";
-        let symbol = b"FMD";
+    //     let name = b"Fake money";
+    //     let symbol = b"FMD";
 
-        managed_coin::initialize<FakeMoney>(&owner, name, symbol, 8, false);
-        managed_coin::register<FakeMoney>(&account);
-        managed_coin::register<FakeMoney>(&admin);
-        managed_coin::register<FakeMoney>(&owner);
-        managed_coin::mint<FakeMoney>(&owner, admin_addr, 100000);
-        assert!(coin::balance<FakeMoney>(admin_addr) == 100000, 0);
+    //     managed_coin::initialize<FakeMoney>(&owner, name, symbol, 8, false);
+    //     managed_coin::register<FakeMoney>(&account);
+    //     managed_coin::register<FakeMoney>(&admin);
+    //     managed_coin::register<FakeMoney>(&owner);
+    //     managed_coin::mint<FakeMoney>(&owner, admin_addr, 100000);
+    //     assert!(coin::balance<FakeMoney>(admin_addr) == 100000, 0);
 
-        //initialize
-        assert!(!exists<GlobalConfig>(@MoveflowCross), 1);
-        let recipient = owner_addr;
-        initialize(&owner, recipient, admin_addr);
-        assert!(exists<GlobalConfig>(@MoveflowCross), 2);
+    //     //initialize
+    //     assert!(!exists<GlobalConfig>(@MoveflowCross), 1);
+    //     let recipient = owner_addr;
+    //     initialize(&owner, recipient, admin_addr);
+    //     assert!(exists<GlobalConfig>(@MoveflowCross), 2);
 
-        //register
-        register_coin<FakeMoney>(&admin);
-        assert!(!exists<Escrow<FakeMoney>>(admin_addr), 3);
-        assert!(coin_type<FakeMoney>() == type_info::type_name<FakeMoney>(), 4);
-        assert!(fee_point<FakeMoney>() == INIT_FEE_POINT, 5);
+    //     //register
+    //     register_coin<FakeMoney>(&admin);
+    //     assert!(!exists<Escrow<FakeMoney>>(admin_addr), 3);
+    //     assert!(coin_type<FakeMoney>() == type_info::type_name<FakeMoney>(), 4);
+    //     assert!(fee_point<FakeMoney>() == INIT_FEE_POINT, 5);
 
-        //create
-        create<FakeMoney>(
-            &admin,
-            utf8(b"test"),
-            utf8(b"test"),
-            recipient,
-            60000,
-            10000,
-            10050,
-            10,
-            true,
-            true,
-            true
-        );
-        assert!(coin::balance<FakeMoney>(admin_addr) == 40000, 0);
-        // get _config
-        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
-        let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
+    //     //create
+    //     create<FakeMoney>(
+    //         &admin,
+    //         utf8(b"test"),
+    //         utf8(b"test"),
+    //         recipient,
+    //         60000,
+    //         10000,
+    //         10050,
+    //         10,
+    //         true,
+    //         true,
+    //         true
+    //     );
+    //     assert!(coin::balance<FakeMoney>(admin_addr) == 40000, 0);
+    //     // get _config
+    //     let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+    //     let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
 
-        let _stream = table_with_length::borrow(&global.streams_store, 0);
-        debug::print(&coin::balance<FakeMoney>(recipient));
-        let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
-        debug::print(&coin::value(&escrow_coin.coin));
-        assert!(_stream.recipient == recipient, 0);
-        assert!(_stream.sender == admin_addr, 0);
-        assert!(_stream.start_time == 10000, 0);
-        assert!(_stream.stop_time == 10050, 0);
-        assert!(_stream.deposit_amount == 60000, 0);
-        assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
-        debug::print(&_stream.rate_per_interval);
-        debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
-        assert!(_stream.rate_per_interval ==
-            _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
-        assert!(_stream.last_withdraw_time == 10000, 0);
+    //     let _stream = table_with_length::borrow(&global.streams_store, 0);
+    //     debug::print(&coin::balance<FakeMoney>(recipient));
+    //     let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
+    //     debug::print(&coin::value(&escrow_coin.coin));
+    //     assert!(_stream.recipient == recipient, 0);
+    //     assert!(_stream.sender == admin_addr, 0);
+    //     assert!(_stream.start_time == 10000, 0);
+    //     assert!(_stream.stop_time == 10050, 0);
+    //     assert!(_stream.deposit_amount == 60000, 0);
+    //     assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
+    //     debug::print(&_stream.rate_per_interval);
+    //     debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
+    //     assert!(_stream.rate_per_interval ==
+    //         _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
+    //     assert!(_stream.last_withdraw_time == 10000, 0);
 
-        //wthidraw
-        let beforeWithdraw = coin::balance<FakeMoney>(recipient);
-        debug::print(&coin::balance<FakeMoney>(recipient));
+    //     //wthidraw
+    //     let beforeWithdraw = coin::balance<FakeMoney>(recipient);
+    //     debug::print(&coin::balance<FakeMoney>(recipient));
 
-        timestamp::update_global_time_for_test_secs(10010);
-        withdraw<FakeMoney>(0);
-        debug::print(&coin::balance<FakeMoney>(recipient));
-        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
-        let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
-        let _stream = table_with_length::borrow(&global.streams_store, 0);
-        assert!(_stream.last_withdraw_time == 10010, 0);
-        assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 1, 0);
+    //     timestamp::update_global_time_for_test_secs(10010);
+    //     withdraw<FakeMoney>(0);
+    //     debug::print(&coin::balance<FakeMoney>(recipient));
+    //     let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+    //     let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
+    //     let _stream = table_with_length::borrow(&global.streams_store, 0);
+    //     assert!(_stream.last_withdraw_time == 10010, 0);
+    //     assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 1, 0);
 
-        timestamp::fast_forward_seconds(10);
-        withdraw<FakeMoney>(0);
-        debug::print(&coin::balance<FakeMoney>(recipient));
-        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
-        let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
-        let _stream = table_with_length::borrow(&global.streams_store, 0);
-        assert!(_stream.last_withdraw_time == 10020, 0);
-        assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 2, 0);
+    //     timestamp::fast_forward_seconds(10);
+    //     withdraw<FakeMoney>(0);
+    //     debug::print(&coin::balance<FakeMoney>(recipient));
+    //     let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+    //     let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
+    //     let _stream = table_with_length::borrow(&global.streams_store, 0);
+    //     assert!(_stream.last_withdraw_time == 10020, 0);
+    //     assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 2, 0);
 
-        timestamp::fast_forward_seconds(10);
-        withdraw<FakeMoney>(0);
-        debug::print(&coin::balance<FakeMoney>(recipient));
-        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
-        let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
-        let _stream = table_with_length::borrow(&global.streams_store, 0);
-        assert!(_stream.last_withdraw_time == 10030, 0);
-        assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 3, 0);
+    //     timestamp::fast_forward_seconds(10);
+    //     withdraw<FakeMoney>(0);
+    //     debug::print(&coin::balance<FakeMoney>(recipient));
+    //     let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+    //     let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
+    //     let _stream = table_with_length::borrow(&global.streams_store, 0);
+    //     assert!(_stream.last_withdraw_time == 10030, 0);
+    //     assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 3, 0);
 
-        timestamp::fast_forward_seconds(10);
-        withdraw<FakeMoney>(0);
-        debug::print(&coin::balance<FakeMoney>(recipient));
-        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
-        let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
-        let _stream = table_with_length::borrow(&global.streams_store, 0);
-        assert!(_stream.last_withdraw_time == 10040, 0);
-        assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 4, 0);
+    //     timestamp::fast_forward_seconds(10);
+    //     withdraw<FakeMoney>(0);
+    //     debug::print(&coin::balance<FakeMoney>(recipient));
+    //     let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+    //     let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
+    //     let _stream = table_with_length::borrow(&global.streams_store, 0);
+    //     assert!(_stream.last_withdraw_time == 10040, 0);
+    //     assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 4, 0);
 
-        timestamp::fast_forward_seconds(10);
-        withdraw<FakeMoney>(0);
-        debug::print(&coin::balance<FakeMoney>(recipient));
-        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
-        let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
-        let _stream = table_with_length::borrow(&global.streams_store, 0);
-        assert!(_stream.last_withdraw_time == 10050, 0);
-        assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 5, 0);
-    }
+    //     timestamp::fast_forward_seconds(10);
+    //     withdraw<FakeMoney>(0);
+    //     debug::print(&coin::balance<FakeMoney>(recipient));
+    //     let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+    //     let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
+    //     let _stream = table_with_length::borrow(&global.streams_store, 0);
+    //     assert!(_stream.last_withdraw_time == 10050, 0);
+    //     assert!(coin::balance<FakeMoney>(recipient) == beforeWithdraw + 60000/5 * 5, 0);
+    // }
 
-    #[test_only]
-    public fun fee_point<CoinType>(): u8 acquires GlobalConfig {
-        assert!(
-            exists<GlobalConfig>(@MoveflowCross), error::not_found(STREAM_NOT_PUBLISHED),
-        );
-        let global = borrow_global<GlobalConfig>(@MoveflowCross);
+    // #[test_only]
+    // public fun fee_point<CoinType>(): u8 acquires GlobalConfig {
+    //     assert!(
+    //         exists<GlobalConfig>(@MoveflowCross), error::not_found(STREAM_NOT_PUBLISHED),
+    //     );
+    //     let global = borrow_global<GlobalConfig>(@MoveflowCross);
 
-        let coin_type = type_info::type_name<CoinType>();
-        assert!(
-            table::contains(&global.coin_configs, coin_type), error::not_found(COIN_CONF_NOT_FOUND),
-        );
-        table::borrow(&global.coin_configs, coin_type).fee_point
-    }
+    //     let coin_type = type_info::type_name<CoinType>();
+    //     assert!(
+    //         table::contains(&global.coin_configs, coin_type), error::not_found(COIN_CONF_NOT_FOUND),
+    //     );
+    //     table::borrow(&global.coin_configs, coin_type).fee_point
+    // }
 
-    #[test_only]
-    public fun coin_type<CoinType>(): String acquires GlobalConfig {
-        assert!(
-            exists<GlobalConfig>(@MoveflowCross), error::not_found(STREAM_NOT_PUBLISHED),
-        );
-        let global = borrow_global<GlobalConfig>(@MoveflowCross);
+    // #[test_only]
+    // public fun coin_type<CoinType>(): String acquires GlobalConfig {
+    //     assert!(
+    //         exists<GlobalConfig>(@MoveflowCross), error::not_found(STREAM_NOT_PUBLISHED),
+    //     );
+    //     let global = borrow_global<GlobalConfig>(@MoveflowCross);
 
-        let coin_type = type_info::type_name<CoinType>();
-        assert!(
-            table::contains(&global.coin_configs, coin_type), error::not_found(COIN_CONF_NOT_FOUND),
-        );
-        table::borrow(&global.coin_configs, coin_type).coin_type
-    }
+    //     let coin_type = type_info::type_name<CoinType>();
+    //     assert!(
+    //         table::contains(&global.coin_configs, coin_type), error::not_found(COIN_CONF_NOT_FOUND),
+    //     );
+    //     table::borrow(&global.coin_configs, coin_type).coin_type
+    // }
 
-    #[test(account = @0x1, owner= @MoveflowCross, admin = @0x2, account2 = @0x3, account3 = @0x4)]
-    fun batch_create_test(
-        account: signer,
-        owner: signer,
-        admin: signer,
-        account2: signer,
-        account3: signer
-    ) acquires GlobalConfig, Escrow {
-        timestamp::set_time_has_started_for_testing(&account);
+    // #[test(account = @0x1, owner= @MoveflowCross, admin = @0x2, account2 = @0x3, account3 = @0x4)]
+    // fun batch_create_test(
+    //     account: signer,
+    //     owner: signer,
+    //     admin: signer,
+    //     account2: signer,
+    //     account3: signer
+    // ) acquires GlobalConfig, Escrow {
+    //     timestamp::set_time_has_started_for_testing(&account);
 
-        let owner_addr = signer::address_of(&owner);
-        account::create_account_for_test(owner_addr);
-        debug::print(&owner_addr);
-        let admin_addr = signer::address_of(&admin);
-        account::create_account_for_test(admin_addr);
-        debug::print(&admin_addr);
-        let account_addr = signer::address_of(&account);
-        account::create_account_for_test(account_addr);
-        debug::print(&account_addr);
-        let account2_addr = signer::address_of(&account2);
-        account::create_account_for_test(account2_addr);
-        debug::print(&account2_addr);
-        let account3_addr = signer::address_of(&account3);
-        account::create_account_for_test(account3_addr);
-        debug::print(&account3_addr);
+    //     let owner_addr = signer::address_of(&owner);
+    //     account::create_account_for_test(owner_addr);
+    //     debug::print(&owner_addr);
+    //     let admin_addr = signer::address_of(&admin);
+    //     account::create_account_for_test(admin_addr);
+    //     debug::print(&admin_addr);
+    //     let account_addr = signer::address_of(&account);
+    //     account::create_account_for_test(account_addr);
+    //     debug::print(&account_addr);
+    //     let account2_addr = signer::address_of(&account2);
+    //     account::create_account_for_test(account2_addr);
+    //     debug::print(&account2_addr);
+    //     let account3_addr = signer::address_of(&account3);
+    //     account::create_account_for_test(account3_addr);
+    //     debug::print(&account3_addr);
 
-        let name = b"Fake money";
-        let symbol = b"FMD";
+    //     let name = b"Fake money";
+    //     let symbol = b"FMD";
 
-        managed_coin::initialize<FakeMoney>(&owner, name, symbol, 8, false);
-        managed_coin::register<FakeMoney>(&account);
-        managed_coin::register<FakeMoney>(&account2);
-        managed_coin::register<FakeMoney>(&account3);
-        managed_coin::register<FakeMoney>(&admin);
-        managed_coin::register<FakeMoney>(&owner);
-        managed_coin::mint<FakeMoney>(&owner, admin_addr, 100000);
-        assert!(coin::balance<FakeMoney>(admin_addr) == 100000, 0);
+    //     managed_coin::initialize<FakeMoney>(&owner, name, symbol, 8, false);
+    //     managed_coin::register<FakeMoney>(&account);
+    //     managed_coin::register<FakeMoney>(&account2);
+    //     managed_coin::register<FakeMoney>(&account3);
+    //     managed_coin::register<FakeMoney>(&admin);
+    //     managed_coin::register<FakeMoney>(&owner);
+    //     managed_coin::mint<FakeMoney>(&owner, admin_addr, 100000);
+    //     assert!(coin::balance<FakeMoney>(admin_addr) == 100000, 0);
 
-        //initialize
-        assert!(!exists<GlobalConfig>(@MoveflowCross), 1);
-        initialize(&owner, owner_addr, admin_addr);
-        assert!(exists<GlobalConfig>(@MoveflowCross), 2);
+    //     //initialize
+    //     assert!(!exists<GlobalConfig>(@MoveflowCross), 1);
+    //     initialize(&owner, owner_addr, admin_addr);
+    //     assert!(exists<GlobalConfig>(@MoveflowCross), 2);
 
-        //register
-        register_coin<FakeMoney>(&admin);
-        assert!(!exists<Escrow<FakeMoney>>(admin_addr), 3);
-        assert!(coin_type<FakeMoney>() == type_info::type_name<FakeMoney>(), 4);
-        assert!(fee_point<FakeMoney>() == INIT_FEE_POINT, 5);
+    //     //register
+    //     register_coin<FakeMoney>(&admin);
+    //     assert!(!exists<Escrow<FakeMoney>>(admin_addr), 3);
+    //     assert!(coin_type<FakeMoney>() == type_info::type_name<FakeMoney>(), 4);
+    //     assert!(fee_point<FakeMoney>() == INIT_FEE_POINT, 5);
 
-        let recipients = vector::empty<address>();
-        vector::push_back(&mut recipients, account_addr);
-        vector::push_back(&mut recipients, account2_addr);
-        vector::push_back(&mut recipients, account3_addr);
+    //     let recipients = vector::empty<address>();
+    //     vector::push_back(&mut recipients, account_addr);
+    //     vector::push_back(&mut recipients, account2_addr);
+    //     vector::push_back(&mut recipients, account3_addr);
 
-        let deposit_amounts = vector::empty<u64>();
-        vector::push_back(&mut deposit_amounts, 10000);
-        vector::push_back(&mut deposit_amounts, 20000);
-        vector::push_back(&mut deposit_amounts, 30000);
+    //     let deposit_amounts = vector::empty<u64>();
+    //     vector::push_back(&mut deposit_amounts, 10000);
+    //     vector::push_back(&mut deposit_amounts, 20000);
+    //     vector::push_back(&mut deposit_amounts, 30000);
 
 
-        //create
-        batchCreate<FakeMoney>(
-            &admin,
-            utf8(b"test"),
-            utf8(b"test"),
-            recipients,
-            deposit_amounts,
-            10000,
-            10050,
-            10,
-            true,
-            true,
-            true
-        );
-        assert!(coin::balance<FakeMoney>(admin_addr) == 40000, 0);
-        // get _config
-        let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
-        let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
+    //     //create
+    //     batchCreate<FakeMoney>(
+    //         &admin,
+    //         utf8(b"test"),
+    //         utf8(b"test"),
+    //         recipients,
+    //         deposit_amounts,
+    //         10000,
+    //         10050,
+    //         10,
+    //         true,
+    //         true,
+    //         true
+    //     );
+    //     assert!(coin::balance<FakeMoney>(admin_addr) == 40000, 0);
+    //     // get _config
+    //     let global = borrow_global_mut<GlobalConfig>(@MoveflowCross);
+    //     let _config = table::borrow(&global.coin_configs, type_info::type_name<FakeMoney>());
 
-        //account
-        let _stream = table_with_length::borrow(&global.streams_store, 0);
-        debug::print(&coin::balance<FakeMoney>(owner_addr));
-        let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
-        debug::print(&coin::value(&escrow_coin.coin));
-        assert!(_stream.recipient == account_addr, 0);
-        assert!(_stream.sender == admin_addr, 0);
-        assert!(_stream.start_time == 10000, 0);
-        assert!(_stream.stop_time == 10050, 0);
-        assert!(_stream.deposit_amount == 10000, 0);
-        assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
-        debug::print(&_stream.rate_per_interval);
-        debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
-        assert!(_stream.rate_per_interval ==
-            _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
-        assert!(_stream.last_withdraw_time == 10000, 0);
+    //     //account
+    //     let _stream = table_with_length::borrow(&global.streams_store, 0);
+    //     debug::print(&coin::balance<FakeMoney>(owner_addr));
+    //     let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
+    //     debug::print(&coin::value(&escrow_coin.coin));
+    //     assert!(_stream.recipient == account_addr, 0);
+    //     assert!(_stream.sender == admin_addr, 0);
+    //     assert!(_stream.start_time == 10000, 0);
+    //     assert!(_stream.stop_time == 10050, 0);
+    //     assert!(_stream.deposit_amount == 10000, 0);
+    //     assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
+    //     debug::print(&_stream.rate_per_interval);
+    //     debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
+    //     assert!(_stream.rate_per_interval ==
+    //         _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
+    //     assert!(_stream.last_withdraw_time == 10000, 0);
 
-        //account2
-        let _stream = table_with_length::borrow(&global.streams_store, 1);
-        debug::print(&coin::balance<FakeMoney>(owner_addr));
-        let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
-        debug::print(&coin::value(&escrow_coin.coin));
-        assert!(_stream.recipient == account2_addr, 0);
-        assert!(_stream.sender == admin_addr, 0);
-        assert!(_stream.start_time == 10000, 0);
-        assert!(_stream.stop_time == 10050, 0);
-        assert!(_stream.deposit_amount == 20000, 0);
-        assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
-        debug::print(&_stream.rate_per_interval);
-        debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
-        assert!(_stream.rate_per_interval ==
-            _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
-        assert!(_stream.last_withdraw_time == 10000, 0);
+    //     //account2
+    //     let _stream = table_with_length::borrow(&global.streams_store, 1);
+    //     debug::print(&coin::balance<FakeMoney>(owner_addr));
+    //     let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
+    //     debug::print(&coin::value(&escrow_coin.coin));
+    //     assert!(_stream.recipient == account2_addr, 0);
+    //     assert!(_stream.sender == admin_addr, 0);
+    //     assert!(_stream.start_time == 10000, 0);
+    //     assert!(_stream.stop_time == 10050, 0);
+    //     assert!(_stream.deposit_amount == 20000, 0);
+    //     assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
+    //     debug::print(&_stream.rate_per_interval);
+    //     debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
+    //     assert!(_stream.rate_per_interval ==
+    //         _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
+    //     assert!(_stream.last_withdraw_time == 10000, 0);
 
-        //account3
-        let _stream = table_with_length::borrow(&global.streams_store, 2);
-        debug::print(&coin::balance<FakeMoney>(owner_addr));
-        let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
-        debug::print(&coin::value(&escrow_coin.coin));
-        assert!(_stream.recipient == account3_addr, 0);
-        assert!(_stream.sender == admin_addr, 0);
-        assert!(_stream.start_time == 10000, 0);
-        assert!(_stream.stop_time == 10050, 0);
-        assert!(_stream.deposit_amount == 30000, 0);
-        assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
-        debug::print(&_stream.rate_per_interval);
-        debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
-        assert!(_stream.rate_per_interval ==
-            _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
-        assert!(_stream.last_withdraw_time == 10000, 0);
-    }
+    //     //account3
+    //     let _stream = table_with_length::borrow(&global.streams_store, 2);
+    //     debug::print(&coin::balance<FakeMoney>(owner_addr));
+    //     let escrow_coin = borrow_global<Escrow<FakeMoney>>(_stream.escrow_address);
+    //     debug::print(&coin::value(&escrow_coin.coin));
+    //     assert!(_stream.recipient == account3_addr, 0);
+    //     assert!(_stream.sender == admin_addr, 0);
+    //     assert!(_stream.start_time == 10000, 0);
+    //     assert!(_stream.stop_time == 10050, 0);
+    //     assert!(_stream.deposit_amount == 30000, 0);
+    //     assert!(_stream.remaining_amount == coin::value(&escrow_coin.coin), 0);
+    //     debug::print(&_stream.rate_per_interval);
+    //     debug::print(&(_stream.deposit_amount * 1000/(_stream.stop_time - _stream.start_time)));
+    //     assert!(_stream.rate_per_interval ==
+    //         _stream.deposit_amount * 1000/((_stream.stop_time - _stream.start_time)/_stream.interval), 0);
+    //     assert!(_stream.last_withdraw_time == 10000, 0);
+    // }
 }

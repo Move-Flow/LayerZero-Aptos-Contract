@@ -64,12 +64,11 @@ aptos move run \
 * Init
   * Set the following variables in `tasks/setTrustedRemote.Aptos.js` according to deployment above
     * `remoteChainId`
-    * `localContractAdd`
     * `remoteAddress`
     * `ENDPOINT_HTTP`
-    * `mflAddress`
     * `remoteMflAddress`
   * `npx hardhat --network bsc-testnet setTrustedRemote.Aptos`, what the script should have done:
+    * Mint MFL
     * Register MFL
     * Deposit MFL to cx chain pool
     * set trusted remote
@@ -83,9 +82,11 @@ aptos move run \
     * `rmtMflTokenAddress`
     * `rmtEvmReceiverAddr`
     * `remoteChainId`
-  * MFL Token owner transfers some MFL to Contract Owner.
+  * MFL Token owner transfers at least 0.1 MFL to Contract Owner.
+  * Ensure the deployer's apt balance is greater than 3 apt.
   * `cd sdk; npx jest ./tests/moveflow.setRemote.test.ts`, what the script should have done：
-    * `Register MFL on Moveflow contract`
+    * Mint MFL
+    * Register MFL on Moveflow contract
     * `set_coin_map`
     * `setRemote`
     * Create a stream whose receiver is an EVM user.
@@ -94,10 +95,24 @@ aptos move run \
 ## EVM
 * Withdraw from aptos chain
   * Set the following variables in `tasks/withdrawFrom.Aptos.js` according to deployment above and env
-    * `localContractAdd`
+    * `streamId`
     * `remoteChainId`
   * `npx hardhat --network bsc-testnet withdrawFrom.Aptos`
 
+# Test Helper
+## Aptos
+* Test crosschain withdraw
+  * set the following in `npx jest ./tests/moveflow.withdraw.test.ts` 
+    * `layerzeroDeployedAddress`
+    * `mflOwnerAddress`
+    * `rmtEvmContractAddr`
+    * `streamId`
+    * `remoteChainId`
+  * `cd sdk; npx jest ./tests/moveflow.withdraw.test.ts`
+
+## EVM
+* Test moveflow contract
+  * `npx hardhat test test/examples/Moveflow.test.js`
 # Tx Data Search
 ## Tools
 * Layerzero explorer:
@@ -113,11 +128,36 @@ aptos move run \
 * Lz module
   * Testnet: 0x1759cc0d3161f1eb79f65847d4feb9d1f74fb79014698a23b16b28b9cd4c37e3
 
-# Dev Address
+# FAQ
+## Stuck Cx Chain Tx
+* Q: How do you recover the funds in a blocked tx / retry with a new nonce
+  * Is this for V1? A blocked message just means that the previous nonce is a storedPayload. Once the StoredPayload has been cleared your tx will automatically clear and execute. You can retry a storedPayload via LayerZero Scan
+
+# Testnet Dev Address
+## Testnet6
+### Aptos
+* Owner: 0xf31930087dbb136119bdec3e97dc6e179db11ede52a04103939e33be60fff3e8
+* MFL Token owner: 0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886
+
+### BSC
+* Owner: 0xA8c4AAE4ce759072D933bD4a51172257622eF128
+* Moveflow Contract: 0xb4028600028C3966c3D7730b7e2735b031DE4B44
+* MFL Token Contract: 0x6A1a221eB8c61cfa6877938FbeE8bE7290b281D0
+
+## Testnet5
+### Aptos
+* Owner: 0x3619778b653e7d805f7a29fb20e880e08ee9c3dde0176d1d71c8dbaca35311f8
+* MFL Token Tx: 0x27170e998c12b909e26d50d218765e8a06f6dd2db3fd9c26a36c78557d3cfc06
+* MFL Token owner: 0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886
+
+### BSC
+* Owner: 0xA8c4AAE4ce759072D933bD4a51172257622eF128
+* Moveflow Contract: 0xF122Fb233fAd2832263E69fc2BF42Cbcff84D870
+* MFL Token Contract: 0xDE3a190D9D26A8271Ae9C27573c03094A8A2c449
+
 ## Testnet4
 ### Aptos
 * Owner: 0x01a4bb54c4c053d47c9f812cc143c6a83028e2df5655d2be65dfe707b77630d4
-* Contract Creation Tx: 0xf39be04e1151f7fb26f053fe10da002087c2b2f9d8fe974f0c3867de46e5f6e3
 * MFL Token Tx: 0x27170e998c12b909e26d50d218765e8a06f6dd2db3fd9c26a36c78557d3cfc06
 * MFL Token owner: 0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886
 
@@ -129,7 +169,6 @@ aptos move run \
 ## Testnet3
 ### Aptos
 * Owner: 0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886
-* Contract Creation Tx: 0xadd999599717a34735482dbec58c05efef3b145a7bd52fb7f6db610967016d98
 * MFL Token Tx: 0x27170e998c12b909e26d50d218765e8a06f6dd2db3fd9c26a36c78557d3cfc06
 * MFL Token owner: 0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886
 
@@ -141,7 +180,6 @@ aptos move run \
 ## Testnet2
 ### Aptos
 * Owner: 0x159a59a77d1219724e88293f6e60e82fcbadd7f1a61789b723266006f0044851
-* Contract Creation Tx: 0xe183c1a56f48ffbd9fb109c1e76b7e3952061be0f65f980aa2366684ab12219b
 
 ### BSC
 * Owner: 0xA8c4AAE4ce759072D933bD4a51172257622eF128
@@ -150,9 +188,14 @@ aptos move run \
 ## Testnet
 ### Aptos
 * Owner: 0xdbf4ebd276c84e88f0a04a4b0d26241f654ad411c250afa3a888eb3f0011486a
-* Contract Creation Tx: 0xdbf4ebd276c84e88f0a04a4b0d26241f654ad411c250afa3a888eb3f0011486a
 ### BSC
 * Owner: 0x569595234428B29F400a38B3E3DA09eBDBcCBC44
 * Contract: 0x7F384B4a58df3e38CDF74727Cfbf9D22a65aCE1f
 
+# Testnet Dev Example
+### Ex1 - aptos sender sends MFL, bsc receiver receives MFL
+* Create cx chain MFL stream on aptos: 0xeb0825f29a545b5d531cf95a7e66356e55379186fbcd747f4f0927309e66bb4e
+* Withdraw from bsc: 0xb40c1f7461080a647f4980240db5d4ad3b45573cdb1bb8c6d97e5a7b5767cbbb
+* Withdraw on aptos: 0x0eff3af781bceae660bc33a314d7a692f5f89d859ba116b9e6b1afb5e0cd6ca6
+* Receiver on bsc receives MFL: 0xe59080bab28ea2c013e4ad841e2460578d76139df014e2764a71b8c85b880c4e 
 

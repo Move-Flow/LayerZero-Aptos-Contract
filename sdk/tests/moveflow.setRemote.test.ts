@@ -14,9 +14,9 @@ const env = Environment.TESTNET
 // retrieve the address after self deployment in local env or aptos doc in testnet env
 const layerzeroDeployedAddress = "0x1759cc0d3161f1eb79f65847d4feb9d1f74fb79014698a23b16b28b9cd4c37e3";  // Testnet
 const mflOwnerAddress = "0x9ae8412de465c9fbf398ea46dfd23196cf216918321688b213e5da904d281886"; // Testnet, MFL token address
-const rmtEvmContractAddr = "0x0B858B1C52e49DF07fd96b87CF5DA7838f170c04";
+const rmtEvmContractAddr = "0xb4028600028C3966c3D7730b7e2735b031DE4B44";
 const rmtEvmReceiverAddr = "0xA8c4AAE4ce759072D933bD4a51172257622eF128";
-const rmtMflTokenAddress = "0xDE3a190D9D26A8271Ae9C27573c03094A8A2c449";
+const rmtMflTokenAddress = "0x6A1a221eB8c61cfa6877938FbeE8bE7290b281D0";
 const remoteChainId = 10102; // BSC
 const MIN_DEPOSIT_BALANCE = "1000000";
 
