@@ -28,6 +28,8 @@ import { getTestConfig } from "../tasks/config/local"
 import { findSecretKeyWithZeroPrefix } from "./utils"
 import { FAUCET_URL, NODE_URL } from "../src/constants"
 import { ChainStage } from "@layerzerolabs/lz-sdk"
+import { deployMoveflow } from "../tasks/deploy/deployMoveflow";
+import {Moveflow} from "../src/modules/apps/moveflow";
 
 const env = Environment.LOCAL
 
@@ -80,6 +82,8 @@ describe("layerzero-aptos end-to-end test", () => {
     })
 
     const counterModule = new Counter(sdk, counterDeployedAddress)
+    const moveflowModule = new Moveflow(sdk, counterDeployedAddress)
+
     const oracleModule = new Oracle(sdk, oracleDeployedAddress)
 
     const chainId = 20030
@@ -151,6 +155,14 @@ describe("layerzero-aptos end-to-end test", () => {
                 counterDeployAccount,
                 layerzeroDeployedAddress,
             )
+
+            await deployMoveflow(
+                Environment.LOCAL,
+                ChainStage.PLACEHOLDER_IGNORE,
+                counterDeployAccount,
+                layerzeroDeployedAddress,
+            );
+
             await deployOracle(
                 Environment.LOCAL,
                 ChainStage.PLACEHOLDER_IGNORE,
@@ -238,6 +250,13 @@ describe("layerzero-aptos end-to-end test", () => {
         let decodedParams
         test("register ua", async () => {
             await counterModule.createCounter(counterDeployAccount, 0)
+
+            await moveflowModule.initialize(counterDeployAccount, counterDeployAccount.address(), counterDeployAccount.address());
+            await moveflowModule.register_coin(counterDeployAccount, '0x1::aptos_coin::AptosCoin');
+            // Todo: issue, register, mint coin MFL
+
+            // Todo: register coin on moveflow
+
             // await displayResources(sdk.client, new aptos.HexString(layerzeroDeployedAddress))
             const typeinfo = await sdk.LayerzeroModule.Endpoint.getUATypeInfo(counterDeployedAddress)
 

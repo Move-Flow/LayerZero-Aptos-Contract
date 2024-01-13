@@ -41,6 +41,7 @@ export const LAYERZERO_MODULES = [
 ]
 
 export const COUNTER_MODULES = ["counter.mv"]
+export const MOVEFLOW_MODULES = ["stream.mv", "mfserde.mv"]
 
 export const BRIDGE_MODULES = ["asset.mv", "limiter.mv", "coin_bridge.mv"]
 

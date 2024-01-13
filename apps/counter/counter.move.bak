@@ -1,0 +1,286 @@
+module counter::counter {
+
+    use std::error;
+    use std::signer;
+    use std::string::{String, utf8, append_utf8};
+    use std::vector;
+    use std::bcs;
+
+    use aptos_std::event::{Self, EventHandle};
+    use aptos_std::table::{Self, Table};
+    use aptos_std::table_with_length::{Self, TableWithLength};
+    use aptos_std::type_info;
+    use aptos_framework::account;
+    use aptos_framework::coin::{Self, Coin};
+    use aptos_framework::timestamp;
+    use aptos_framework::aptos_account;
+    use aptos_framework::aptos_coin::AptosCoin;
+
+    use layerzero::endpoint::{Self, UaCapability};
+    use layerzero::lzapp;
+    use layerzero::remote;
+    use layerzero_common::serde;
+
+    const MIN_DEPOSIT_BALANCE: u64 = 10000; // 0.0001 APT(decimals=8)
+    const MIN_RATE_PER_INTERVAL: u64 = 1000; // 0.00000001 APT(decimals=8)
+    const INIT_FEE_POINT: u8 = 25; // 0.25%
+
+    const STREAM_HAS_PUBLISHED: u64 = 1;
+    const STREAM_NOT_PUBLISHED: u64 = 2;
+    const STREAM_PERMISSION_DENIED: u64 = 3;
+    const STREAM_INSUFFICIENT_BALANCES: u64 = 4;
+    const STREAM_NOT_FOUND: u64 = 5;
+    const STREAM_BALANCE_TOO_LITTLE: u64 = 6;
+    const STREAM_HAS_REGISTERED: u64 = 7;
+    const STREAM_NO_WITHDRAW_AMOUNT: u64 = 8;
+    const STREAM_NOT_START: u64 = 9;
+    const STREAM_EXCEED_STOP_TIME: u64 = 10;
+    const STREAM_IS_CLOSE: u64 = 11;
+    const STREAM_RATE_TOO_LITTLE: u64 = 12;
+    const COIN_CONF_NOT_FOUND: u64 = 13;
+    const STREAM_NEW_STOP_TIME: u64 = 14;
+    const STREAM_INVALID_CREATE: u64 = 15;
+    const STREAM_REJECT_CLOSE: u64 = 16;
+    const STREAM_REJECT_PAUSE: u64 = 17;
+    const STREAM_PAUSE_STATUS: u64 = 18;
+    const STREAM_NO_PAUSE_STATUS: u64 = 19;
+    const STREAM_IS_STOP: u64 = 20;
+    const RECIPIENT_CAN_NOT_RECEIVE: u64 = 21;
+    const ERR_LENGTH_MISMATCH: u64 = 22;
+
+    const EVENT_TYPE_CREATE: u8 = 100;
+    const EVENT_TYPE_WITHDRAW: u8 = 101;
+    const EVENT_TYPE_CLOSE: u8 = 102;
+    const EVENT_TYPE_EXTEND: u8 = 103;
+    const EVENT_TYPE_REGISTER_COIN: u8 = 104;
+    const EVENT_TYPE_SET_FEE_POINT: u8 = 105;
+    const EVENT_TYPE_SET_FEE_TO: u8 = 106;
+    const EVENT_TYPE_SET_NEW_ADMIN: u8 = 107;
+    const EVENT_TYPE_SET_NEW_RECIPIENT: u8 = 108;
+    const EVENT_TYPE_PAUSE: u8 = 109;
+    const EVENT_TYPE_RESUME: u8 = 110;
+
+    /// Event emitted when created/withdraw/closed a streampay
+    struct StreamEventCrossChain has drop, store {
+        id: u64,
+        event_type: u8,
+        sender: address,
+        recipient: vector<u8>,
+        deposit_amount: u64,
+        remaining_amount: u64,
+        extend_amount: u64,
+        withdraw_amount: u64,
+        pause_at: u64,
+        chain_id: u64,
+    }
+
+    /// Event emitted when withdraw on a remote chain
+    struct StreamEventCrossChainWithdraw has drop, store {
+        id: u64,
+        event_type: u8,
+        sender: address,
+        chain_id: u64,
+    }
+
+    struct ConfigEvent has drop, store {
+        event_type: u8,
+        coin_type: String,
+        fee_point: u8,
+        fee_recipient: address,
+        modified_recipient: address,
+        modified_admin: address,
+    }
+
+    /// initialize when create
+    /// change when withdraw, drop when close
+    struct StreamInfoCrossChain has store {
+        id: u64,
+        name: String,
+        remark: String,
+        sender: address,
+        recipient: vector<u8>,
+        coin_type: String,
+        escrow_address: address,
+        interval: u64,
+        rate_per_interval: u64,
+        start_time: u64,
+        stop_time: u64,
+        last_withdraw_time: u64,
+        create_at: u64,         // time that stream is creat at.
+        deposit_amount: u64,   // the amount of assert deposited this stream.
+        withdrawn_amount: u64, // the amount of assert withdrawn by recipitent.
+        remaining_amount: u64, // the amount of assert remained, update when withdraw.
+        closed: bool,
+        feature_info: FeatureInfo,
+        pauseInfo: PauseInfo,
+        chain_id: u64,
+    }
+
+    struct FeatureInfo has store {
+        pauseable: bool,
+        closeable: bool,
+        recipient_modifiable: bool,
+    }
+
+    struct PauseInfo has store {
+        paused: bool,
+        pause_at: u64,
+        acc_paused_time: u64,
+    }
+
+    struct Escrow<phantom CoinType> has key {
+        coin: Coin<CoinType>,
+    }
+
+    struct GlobalConfig has key {
+        fee_recipient: address,
+        admin: address,
+        coin_configs: Table<String, CoinConfig>,
+        streams_store: TableWithLength<u64, StreamInfoCrossChain>,
+        input_stream: Table<vector<u8>, vector<u64>>, // Todo: temparoay storage for fronrend query
+        output_stream: Table<address, vector<u64>>, // Todo: temparoay storage for fronrend query
+        stream_events: EventHandle<StreamEventCrossChain>,
+        stream_crosschain_wtihdraw_events: EventHandle<StreamEventCrossChainWithdraw>,
+        config_events: EventHandle<ConfigEvent>
+    }
+
+    struct CoinConfig has store {
+        fee_point: u8,
+        coin_type: String,
+    }
+
+    struct Capabilities<phantom UA> has key {
+        cap: UaCapability<UA>,
+    }
+
+    /// set fee_recipient and admin
+    public entry fun initialize(
+        owner: &signer,
+        fee_recipient: address,
+        admin: address,
+    ) {
+        let owner_addr = signer::address_of(owner);
+        assert!(
+            @MoveflowCross == owner_addr,
+            error::permission_denied(STREAM_PERMISSION_DENIED),
+        );
+
+        assert!(
+            !exists<GlobalConfig>(@MoveflowCross), error::already_exists(STREAM_HAS_PUBLISHED),
+        );
+
+        move_to(owner, GlobalConfig {
+                fee_recipient,
+                admin,
+                coin_configs: table::new<String, CoinConfig>(),
+                streams_store: table_with_length::new<u64, StreamInfoCrossChain>(),
+                input_stream: table::new<vector<u8>, vector<u64>>(),
+                output_stream: table::new<address, vector<u64>>(),
+                stream_events: account::new_event_handle<StreamEventCrossChain>(owner),
+                stream_crosschain_wtihdraw_events: account::new_event_handle<StreamEventCrossChainWithdraw>(owner),
+                config_events: account::new_event_handle<ConfigEvent>(owner)
+            }
+        );
+
+        let cap = endpoint::register_ua<CounterUA>(owner);
+        lzapp::init(owner, cap);
+        remote::init(owner);
+
+        move_to(owner, Capabilities { cap });
+    }
+
+/*
+    use std::signer;
+    use aptos_framework::coin::Self;
+    use aptos_framework::aptos_coin::AptosCoin;
+    use std::vector;
+    use layerzero::endpoint::{Self, UaCapability};
+    use layerzero::lzapp;
+    use layerzero::remote;
+    use aptos_std::type_info;
+*/
+    const ECOUNTER_ALREADY_CREATED: u64 = 0x00;
+    const ECOUNTER_NOT_CREATED: u64 = 0x01;
+    const ECOUNTER_UNTRUSTED_ADDRESS: u64 = 0x02;
+
+    const COUNTER_PAYLOAD: vector<u8> = vector<u8>[1, 2, 3, 4];
+
+    struct CounterUA {}
+
+    struct CapabilitiesCT has key {
+        cap: UaCapability<CounterUA>,
+    }
+
+    /// Resource that wraps an integer counter
+    struct Counter has key { i: u64 }
+
+    fun init_module(account: &signer) {
+//        let cap = endpoint::register_ua<CounterUA>(account);
+//        lzapp::init(account, cap);
+//        remote::init(account);
+
+//        move_to(account, CapabilitiesCT { cap });
+    }
+
+    /// create_counter a `Counter` resource with value `i` under the given `account`
+    public entry fun create_counter(account: &signer, i: u64) {
+        move_to(account, Counter { i })
+    }
+
+    /// Read the value in the `Counter` resource stored at `addr`
+    public fun get_count(addr: address): u64 acquires Counter {
+        borrow_global<Counter>(addr).i
+    }
+
+    //
+    // lz func
+    //
+    public entry fun send_to_remote(
+        account: &signer,
+        chain_id: u64,
+        fee: u64,
+        adapter_params: vector<u8>,
+    ) acquires CapabilitiesCT {
+        let fee_in_coin = coin::withdraw<AptosCoin>(account, fee);
+        let signer_addr = signer::address_of(account);
+
+        let cap = borrow_global<CapabilitiesCT>(signer_addr);
+        let dst_address = remote::get(@counter, chain_id);
+        let (_, refund) = lzapp::send<CounterUA>(chain_id, dst_address, COUNTER_PAYLOAD, fee_in_coin, adapter_params, vector::empty<u8>(), &cap.cap);
+
+        coin::deposit(signer_addr, refund);
+    }
+
+    public fun quote_fee(dst_chain_id: u64, adapter_params: vector<u8>, pay_in_zro: bool): (u64, u64) {
+        endpoint::quote_fee(@counter, dst_chain_id, vector::length(&COUNTER_PAYLOAD), pay_in_zro, adapter_params, vector::empty<u8>())
+    }
+
+    public entry fun lz_receive(chain_id: u64, src_address: vector<u8>, payload: vector<u8>) acquires Counter, CapabilitiesCT {
+        lz_receive_internal(chain_id, src_address, payload);
+    }
+
+    public fun lz_receive_types(_src_chain_id: u64, _src_address: vector<u8>, _payload: vector<u8>) : vector<type_info::TypeInfo> {
+        vector::empty<type_info::TypeInfo>()
+    }
+
+    fun lz_receive_internal(src_chain_id: u64, src_address: vector<u8>, payload: vector<u8>): vector<u8> acquires Counter, CapabilitiesCT {
+        let cap = borrow_global<CapabilitiesCT>(@counter);
+
+        remote::assert_remote(@counter, src_chain_id, src_address);
+        endpoint::lz_receive<CounterUA>(src_chain_id, src_address, payload, &cap.cap);
+
+        // increment the counter
+        let c_ref = &mut borrow_global_mut<Counter>(@counter).i;
+        *c_ref = *c_ref + 1;
+
+        payload
+    }
+
+    public entry fun retry_payload(src_chain_id: u64, src_address: vector<u8>, nonce: u64, payload: vector<u8>) acquires CapabilitiesCT, Counter {
+        let cap = borrow_global<CapabilitiesCT>(@counter);
+        lzapp::remove_stored_paylaod<CounterUA>(src_chain_id, src_address, nonce, payload, &cap.cap);
+
+        let c_ref = &mut borrow_global_mut<Counter>(@counter).i;
+        *c_ref = *c_ref + 1;
+    }
+}

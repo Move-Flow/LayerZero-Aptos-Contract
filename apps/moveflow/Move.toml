@@ -1,0 +1,20 @@
+[package]
+name = "moveflow"
+version = "0.0.1"
+
+[addresses]
+MoveflowCross = "_"
+
+[dependencies]
+layerzero = { local = "../../layerzero" }
+
+[dev-addresses]
+MoveflowCross = "0xC0FFEE"
+zro = "0xC0FFE0"
+msglib_auth = "0xC0FFE1"
+msglib_v2 = "0xC0FFE2"
+msglib_v1_1 = "0xC0FFE3"
+executor_auth = "0xC0FFE4"
+executor_v2 = "0xC0FFE5"
+layerzero = "0xC0FFE6"
+layerzero_common = "0xC0FFE7"

@@ -4,37 +4,23 @@ import { LzApp } from "./lzapp"
 import { isErrorOfApiError } from "../../utils"
 import { UlnConfigType } from "../../types"
 
-export class Counter {
+export class Moveflow {
     readonly address: aptos.MaybeHexString
     SEND_PAYLOAD_LENGTH: number = 4
     private sdk: SDK
     private lzApp: LzApp
     private readonly uaType: string
-    private readonly uaMfType: string
 
-    constructor(sdk: SDK, counter: aptos.MaybeHexString, lzApp?: aptos.MaybeHexString) {
+    constructor(sdk: SDK, moveflow: aptos.MaybeHexString, lzApp?: aptos.MaybeHexString) {
         this.sdk = sdk
-        this.address = counter
-        this.lzApp = new LzApp(sdk, lzApp || sdk.accounts.layerzero!, counter)
+        this.address = moveflow
+        this.lzApp = new LzApp(sdk, lzApp || sdk.accounts.layerzero!, moveflow)
         this.uaType = `${this.address}::counter::CounterUA`
-        this.uaMfType = `${this.address}::counter::counter`
     }
-
-/*
-    async initialize(signer: aptos.AptosAccount): Promise<aptos.Types.Transaction> {
-        const transaction: aptos.Types.EntryFunctionPayload = {
-            function: `${this.address}::counter::init`,
-            type_arguments: [],
-            arguments: [],
-        }
-
-        return this.sdk.sendAndConfirmTransaction(signer, transaction)
-    }
-*/
 
     async initialize(signer: aptos.AptosAccount, fee_recipient: aptos.MaybeHexString, admin: aptos.MaybeHexString): Promise<aptos.Types.Transaction> {
         const transaction: aptos.Types.EntryFunctionPayload = {
-            function: `${this.address}::counter::initialize`,
+            function: `${this.address}::stream::initialize`,
             type_arguments: [],
             arguments: [fee_recipient, admin],
         }
@@ -42,6 +28,15 @@ export class Counter {
         return this.sdk.sendAndConfirmTransaction(signer, transaction)
     }
 
+    async register_coin(signer: aptos.AptosAccount, coinType: string): Promise<aptos.Types.Transaction> {
+        const transaction: aptos.Types.EntryFunctionPayload = {
+            function: `${this.address}::stream::register_coin`,
+            type_arguments: [coinType],
+            arguments: [],
+        }
+
+        return this.sdk.sendAndConfirmTransaction(signer, transaction)
+    }
 
     async getRemote(remoteChainId: aptos.BCS.Uint16): Promise<aptos.BCS.Bytes> {
         return this.lzApp.getRemote(remoteChainId)
@@ -53,14 +48,16 @@ export class Counter {
         return BigInt(i)
     }
 
-    async createCounter(
+    async setCoinMap(
         signer: aptos.AptosAccount,
-        i: aptos.BCS.Uint64 | aptos.BCS.Uint32,
+        remoteChainId: aptos.BCS.Uint16,
+        remoteCoinAddr: aptos.BCS.Bytes,
+        coinType: string,
     ): Promise<aptos.Types.Transaction> {
         const transaction: aptos.Types.EntryFunctionPayload = {
-            function: `${this.address}::counter::create_counter`,
-            type_arguments: [],
-            arguments: [i],
+            function: `${this.address}::stream::set_coin_map`,
+            type_arguments: [coinType],
+            arguments: [remoteChainId, remoteCoinAddr],
         }
 
         return this.sdk.sendAndConfirmTransaction(signer, transaction)
